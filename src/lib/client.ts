@@ -887,7 +887,17 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			PduType.UNCONFIRMED_REQUEST,
 			UnconfirmedServiceChoice.UTC_TIME_SYNCHRONIZATION,
 		)
-		TimeSync.encode(buffer, dateTime)
+		// UTC time sync APDU must encode UTC date/time fields, not local time fields.
+		const utcDateTime = new Date(
+			dateTime.getUTCFullYear(),
+			dateTime.getUTCMonth(),
+			dateTime.getUTCDate(),
+			dateTime.getUTCHours(),
+			dateTime.getUTCMinutes(),
+			dateTime.getUTCSeconds(),
+			dateTime.getUTCMilliseconds(),
+		)
+		TimeSync.encode(buffer, utcDateTime)
 		this.sendBvlc(receiver, buffer)
 	}
 
