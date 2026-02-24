@@ -453,12 +453,45 @@ export const encodeBacnetDate = (buffer: EncodeBuffer, value: Date): void => {
 	buffer.buffer[buffer.offset++] = value.getDay() === 0 ? 7 : value.getDay()
 }
 
+export const encodeBacnetDateUtc = (
+	buffer: EncodeBuffer,
+	value: Date,
+): void => {
+	if (value === ZERO_DATE) {
+		buffer.buffer[buffer.offset++] = 0xff
+		buffer.buffer[buffer.offset++] = 0xff
+		buffer.buffer[buffer.offset++] = 0xff
+		buffer.buffer[buffer.offset++] = 0xff
+		return
+	}
+
+	if (value.getUTCFullYear() >= START_YEAR) {
+		buffer.buffer[buffer.offset++] = value.getUTCFullYear() - START_YEAR
+	} else if (value.getUTCFullYear() < MAX_YEARS /* 1900 + 255 max */) {
+		buffer.buffer[buffer.offset++] = value.getUTCFullYear()
+	} else {
+		throw new Error(`invalid year: ${value.getUTCFullYear()}`)
+	}
+	buffer.buffer[buffer.offset++] = value.getUTCMonth() + 1
+	buffer.buffer[buffer.offset++] = value.getUTCDate()
+	buffer.buffer[buffer.offset++] =
+		value.getUTCDay() === 0 ? 7 : value.getUTCDay()
+}
+
 export const encodeApplicationDate = (
 	buffer: EncodeBuffer,
 	value: Date,
 ): void => {
 	encodeTag(buffer, ApplicationTag.DATE, false, 4)
 	encodeBacnetDate(buffer, value)
+}
+
+export const encodeApplicationDateUtc = (
+	buffer: EncodeBuffer,
+	value: Date,
+): void => {
+	encodeTag(buffer, ApplicationTag.DATE, false, 4)
+	encodeBacnetDateUtc(buffer, value)
 }
 
 const encodeBacnetTime = (buffer: EncodeBuffer, value: Date): void => {
@@ -468,12 +501,27 @@ const encodeBacnetTime = (buffer: EncodeBuffer, value: Date): void => {
 	buffer.buffer[buffer.offset++] = value.getMilliseconds() / 10
 }
 
+const encodeBacnetTimeUtc = (buffer: EncodeBuffer, value: Date): void => {
+	buffer.buffer[buffer.offset++] = value.getUTCHours()
+	buffer.buffer[buffer.offset++] = value.getUTCMinutes()
+	buffer.buffer[buffer.offset++] = value.getUTCSeconds()
+	buffer.buffer[buffer.offset++] = value.getUTCMilliseconds() / 10
+}
+
 export const encodeApplicationTime = (
 	buffer: EncodeBuffer,
 	value: Date,
 ): void => {
 	encodeTag(buffer, ApplicationTag.TIME, false, 4)
 	encodeBacnetTime(buffer, value)
+}
+
+export const encodeApplicationTimeUtc = (
+	buffer: EncodeBuffer,
+	value: Date,
+): void => {
+	encodeTag(buffer, ApplicationTag.TIME, false, 4)
+	encodeBacnetTimeUtc(buffer, value)
 }
 
 const bacappEncodeDatetime = (buffer: EncodeBuffer, value: Date): void => {

@@ -2,35 +2,38 @@ import test from 'node:test'
 import assert from 'node:assert'
 
 import * as utils from './utils'
-import { TimeSync } from '../../src/lib/services'
+
+class CaptureTransport extends utils.TransportStub {
+	public sentPackets: Buffer[] = []
+
+	send(buffer: Buffer, offset: number): void {
+		this.sentPackets.push(Buffer.from(buffer.subarray(0, offset)))
+	}
+}
 
 test.describe('bacnet - timeSyncUTC integration', () => {
-	test('should encode UTC date/time components for UTC sync', () => {
-		const transport = new utils.TransportStub()
+	test('should encode UTC values on the wire for utcTimeSynchronization', () => {
+		const transport = new CaptureTransport()
 		const client = new utils.BacnetClient({ transport, apduTimeout: 200 })
-		const input = new Date('2026-02-24T23:30:00.123Z')
+		const input = new Date('2026-02-24T23:30:00.000Z')
 
-		let captured: Date | null = null
-		const originalEncode = TimeSync.encode
-		;(TimeSync as any).encode = (buffer: any, value: Date) => {
-			captured = value
-			return originalEncode(buffer, value)
-		}
+		client.timeSyncUTC({ address: '127.0.0.2' }, input)
+		client.close()
 
-		try {
-			client.timeSyncUTC({ address: '127.0.0.2' }, input)
-		} finally {
-			;(TimeSync as any).encode = originalEncode
-			client.close()
-		}
-
-		assert.ok(captured instanceof Date)
-		assert.strictEqual(captured.getFullYear(), input.getUTCFullYear())
-		assert.strictEqual(captured.getMonth(), input.getUTCMonth())
-		assert.strictEqual(captured.getDate(), input.getUTCDate())
-		assert.strictEqual(captured.getHours(), input.getUTCHours())
-		assert.strictEqual(captured.getMinutes(), input.getUTCMinutes())
-		assert.strictEqual(captured.getSeconds(), input.getUTCSeconds())
-		assert.strictEqual(captured.getMilliseconds(), input.getUTCMilliseconds())
+		assert.strictEqual(transport.sentPackets.length, 1)
+		const packet = transport.sentPackets[0]
+		const utcPayload = Array.from(packet.subarray(packet.length - 10))
+		assert.deepStrictEqual(utcPayload, [
+			0xa4, // Date tag
+			0x7e, // year: 2026-1900
+			0x02, // month: February
+			0x18, // day: 24
+			0x02, // weekday: Tuesday
+			0xb4, // Time tag
+			0x17, // hour: 23
+			0x1e, // minute: 30
+			0x00, // second: 0
+			0x00, // hundredths: 0
+		])
 	})
 })
