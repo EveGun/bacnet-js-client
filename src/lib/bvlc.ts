@@ -50,9 +50,12 @@ export const decode = (
 	buffer: Buffer,
 	_offset: number,
 ): BvlcPacket | undefined => {
+	if (buffer.length < BVLC_HEADER_LENGTH) return undefined
+
 	let len: number
 	const func = buffer[1]
 	const msgLength = (buffer[2] << 8) | (buffer[3] << 0)
+	if (msgLength < BVLC_HEADER_LENGTH) return undefined
 	if (buffer[0] !== BVLL_TYPE_BACNET_IP || buffer.length !== msgLength)
 		return undefined
 	let originatingIP = null
@@ -71,6 +74,7 @@ export const decode = (
 			len = 4
 			break
 		case BvlcResultPurpose.FORWARDED_NPDU:
+			if (msgLength < 10) return undefined
 			// Work out where the packet originally came from before the BBMD
 			// forwarded it to us, so we can tell the BBMD where to send any reply to.
 			const port = (buffer[8] << 8) | buffer[9]
