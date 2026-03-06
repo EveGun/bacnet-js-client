@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert'
 
 import * as utils from './utils'
-import { BACNetObjectID, CovType } from '../../src'
+import { BACNetObjectID, CovType, EventType, NotifyType } from '../../src'
 import { EventNotifyData } from '../../src/lib/services'
 
 test.describe('bacnet - Services layer EventNotifyData unit', () => {
@@ -47,6 +47,14 @@ test.describe('bacnet - Services layer EventNotifyData unit', () => {
 			ackRequired: true,
 			fromState: 5,
 			toState: 6,
+			changeOfBitstringReferencedBitString: {
+				bitsUsed: 24,
+				value: [0xaa, 0xaa, 0xaa],
+			},
+			changeOfBitstringStatusFlags: {
+				bitsUsed: 24,
+				value: [0xaa, 0xaa, 0xaa],
+			},
 		})
 	})
 
@@ -88,6 +96,11 @@ test.describe('bacnet - Services layer EventNotifyData unit', () => {
 			ackRequired: false,
 			fromState: 1,
 			toState: 2,
+			changeOfStateNewState: { type: 2, state: 2 },
+			changeOfStateStatusFlags: {
+				bitsUsed: 24,
+				value: [0xaa, 0xaa, 0xaa],
+			},
 		})
 	})
 
@@ -130,6 +143,12 @@ test.describe('bacnet - Services layer EventNotifyData unit', () => {
 			ackRequired: false,
 			fromState: 0,
 			toState: 0,
+			changeOfValueTag: CovType.REAL,
+			changeOfValueChangeValue: 90,
+			changeOfValueStatusFlags: {
+				bitsUsed: 24,
+				value: [0xaa, 0xaa, 0xaa],
+			},
 		})
 	})
 
@@ -173,6 +192,13 @@ test.describe('bacnet - Services layer EventNotifyData unit', () => {
 			ackRequired: true,
 			fromState: 19,
 			toState: 12,
+			floatingLimitReferenceValue: 121,
+			floatingLimitStatusFlags: {
+				bitsUsed: 24,
+				value: [0xaa, 0xaa, 0xaa],
+			},
+			floatingLimitSetPointValue: 120,
+			floatingLimitErrorLimit: 120,
 		})
 	})
 
@@ -214,6 +240,13 @@ test.describe('bacnet - Services layer EventNotifyData unit', () => {
 			ackRequired: false,
 			fromState: 0,
 			toState: 0,
+			outOfRangeExceedingValue: 155,
+			outOfRangeStatusFlags: {
+				bitsUsed: 24,
+				value: [0xaa, 0xaa, 0xaa],
+			},
+			outOfRangeDeadband: 50,
+			outOfRangeExceededLimit: 150,
 		})
 	})
 
@@ -258,6 +291,13 @@ test.describe('bacnet - Services layer EventNotifyData unit', () => {
 			ackRequired: false,
 			fromState: 0,
 			toState: 0,
+			changeOfLifeSafetyNewState: 8,
+			changeOfLifeSafetyNewMode: 9,
+			changeOfLifeSafetyStatusFlags: {
+				bitsUsed: 24,
+				value: [0xaa, 0xaa, 0xaa],
+			},
+			changeOfLifeSafetyOperationExpected: 2,
 		})
 	})
 
@@ -302,6 +342,14 @@ test.describe('bacnet - Services layer EventNotifyData unit', () => {
 			ackRequired: false,
 			fromState: 0,
 			toState: 0,
+			bufferReadyBufferProperty: {
+				objectId: { type: 0, instance: 2 },
+				id: 85,
+				arrayIndex: 3,
+				deviceIndentifier: { type: 8, instance: 443 },
+			},
+			bufferReadyPreviousNotification: 121,
+			bufferReadyCurrentNotification: 281,
 		})
 	})
 
@@ -347,6 +395,56 @@ test.describe('bacnet - Services layer EventNotifyData unit', () => {
 			ackRequired: false,
 			fromState: 0,
 			toState: 0,
+			unsignedRangeExceedingValue: 101,
+			unsignedRangeStatusFlags: {
+				bitsUsed: 24,
+				value: [0xaa, 0xaa, 0xaa],
+			},
+			unsignedRangeExceededLimit: 100,
+		})
+	})
+
+	test('should decode BACnetPropertyStates in event values for ALARM notifications', (t) => {
+		const buffer = utils.getBuffer()
+		const date = new Date()
+		date.setMilliseconds(880)
+		EventNotifyData.encode(buffer, {
+			processId: 7,
+			initiatingObjectId: { type: 8, instance: 1319071 },
+			eventObjectId: { type: 13, instance: 42 },
+			timeStamp: { type: 2, value: date },
+			notificationClass: 1,
+			priority: 16,
+			eventType: EventType.CHANGE_OF_STATE,
+			notifyType: NotifyType.ALARM,
+			ackRequired: true,
+			fromState: 2,
+			toState: 3,
+			changeOfStateNewState: { type: 11, state: 1234 },
+			changeOfStateStatusFlags: {
+				bitsUsed: 4,
+				value: [0b00001111],
+			},
+		})
+		const result = EventNotifyData.decode(buffer.buffer, 0)
+		delete result.len
+		assert.deepStrictEqual(result, {
+			processId: 7,
+			initiatingObjectId: { type: 8, instance: 1319071 },
+			eventObjectId: { type: 13, instance: 42 },
+			timeStamp: { type: 2, value: date },
+			notificationClass: 1,
+			priority: 16,
+			eventType: EventType.CHANGE_OF_STATE,
+			notifyType: NotifyType.ALARM,
+			ackRequired: true,
+			fromState: 2,
+			toState: 3,
+			changeOfStateNewState: { type: 11, state: 1234 },
+			changeOfStateStatusFlags: {
+				bitsUsed: 4,
+				value: [0b00001111],
+			},
 		})
 	})
 })
