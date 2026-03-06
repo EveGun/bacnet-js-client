@@ -847,6 +847,55 @@ export interface EventNotifyDataParams {
 	unsignedRangeExceedingValue?: number
 	unsignedRangeStatusFlags?: BACNetBitString
 	unsignedRangeExceededLimit?: number
+
+	// COMMAND_FAILURE
+	commandFailureCommandValue?: Buffer
+	commandFailureStatusFlags?: BACNetBitString
+	commandFailureFeedbackValue?: Buffer
+
+	// DOUBLE_OUT_OF_RANGE
+	doubleOutOfRangeExceedingValue?: number
+	doubleOutOfRangeStatusFlags?: BACNetBitString
+	doubleOutOfRangeDeadband?: number
+	doubleOutOfRangeExceededLimit?: number
+
+	// SIGNED_OUT_OF_RANGE
+	signedOutOfRangeExceedingValue?: number
+	signedOutOfRangeStatusFlags?: BACNetBitString
+	signedOutOfRangeDeadband?: number
+	signedOutOfRangeExceededLimit?: number
+
+	// UNSIGNED_OUT_OF_RANGE
+	unsignedOutOfRangeExceedingValue?: number
+	unsignedOutOfRangeStatusFlags?: BACNetBitString
+	unsignedOutOfRangeDeadband?: number
+	unsignedOutOfRangeExceededLimit?: number
+
+	// CHANGE_OF_CHARACTERSTRING
+	changeOfCharacterStringChangedValue?: string
+	changeOfCharacterStringStatusFlags?: BACNetBitString
+	changeOfCharacterStringAlarmValue?: string
+
+	// CHANGE_OF_STATUS_FLAGS
+	changeOfStatusFlagsPresentValue?: Buffer
+	changeOfStatusFlagsReferencedFlags?: BACNetBitString
+
+	// CHANGE_OF_RELIABILITY
+	changeOfReliabilityReliability?: number
+	changeOfReliabilityStatusFlags?: BACNetBitString
+	changeOfReliabilityPropertyValues?: Buffer
+
+	// CHANGE_OF_DISCRETE_VALUE
+	changeOfDiscreteValueNewValue?: BACNetAppData
+	changeOfDiscreteValueStatusFlags?: BACNetBitString
+
+	// CHANGE_OF_TIMER
+	changeOfTimerNewState?: number
+	changeOfTimerStatusFlags?: BACNetBitString
+	changeOfTimerUpdateTime?: Date
+	changeOfTimerLastStateChange?: number
+	changeOfTimerInitialTimeout?: number
+	changeOfTimerExpirationTime?: Date
 }
 
 export interface EventNotifyDataResult extends EventNotifyDataParams {
