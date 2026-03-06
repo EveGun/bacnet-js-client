@@ -4,7 +4,9 @@ import assert from 'node:assert'
 import * as utils from './utils'
 import * as baAsn1 from '../../src/lib/asn1'
 import {
+	AccessEvent,
 	ApplicationTag,
+	AuthenticationFactorType,
 	BACNetObjectID,
 	CovType,
 	EventType,
@@ -561,12 +563,14 @@ test.describe('bacnet - Services layer EventNotifyData unit', () => {
 		assert.strictEqual(result.eventType, EventType.COMMAND_FAILURE)
 		assert.ok(Buffer.isBuffer(result.commandFailureCommandValue))
 		assert.ok(result.commandFailureCommandValue?.length)
+		assert.ok(result.commandFailureCommandValueDecoded)
 		assert.deepStrictEqual(result.commandFailureStatusFlags, {
 			bitsUsed: 4,
 			value: [0b00001101],
 		})
 		assert.ok(Buffer.isBuffer(result.commandFailureFeedbackValue))
 		assert.ok(result.commandFailureFeedbackValue?.length)
+		assert.ok(result.commandFailureFeedbackValueDecoded)
 	})
 
 	test('should decode signed-out-of-range event values', () => {
@@ -680,5 +684,67 @@ test.describe('bacnet - Services layer EventNotifyData unit', () => {
 			result.changeOfTimerExpirationTime,
 			expirationTime,
 		)
+	})
+
+	test('should decode access-event event values with authentication factor', () => {
+		const buffer = utils.getBuffer()
+		const eventDate = new Date(2026, 0, 9, 8, 9, 10, 140)
+		const authValue = Buffer.from([0xde, 0xad, 0xbe, 0xef])
+		encodeAlarmHeader(buffer, EventType.ACCESS_EVENT, {
+			type: TimeStamp.DATETIME,
+			value: eventDate,
+		})
+		baAsn1.encodeOpeningTag(buffer, 12)
+		baAsn1.encodeOpeningTag(buffer, 13)
+		baAsn1.encodeContextEnumerated(buffer, 0, AccessEvent.GRANTED)
+		baAsn1.encodeContextBitstring(buffer, 1, {
+			bitsUsed: 4,
+			value: [0b00001001],
+		})
+		baAsn1.encodeContextUnsigned(buffer, 2, 55)
+		baAsn1.bacappEncodeContextTimestamp(buffer, 3, {
+			type: TimeStamp.SEQUENCE_NUMBER,
+			value: 88,
+		})
+		baAsn1.encodeOpeningTag(buffer, 4)
+		baAsn1.encodeContextObjectId(buffer, 0, 8, 1319071)
+		baAsn1.encodeContextObjectId(buffer, 1, 32, 987)
+		baAsn1.encodeClosingTag(buffer, 4)
+		baAsn1.encodeOpeningTag(buffer, 5)
+		baAsn1.encodeContextEnumerated(
+			buffer,
+			0,
+			AuthenticationFactorType.SIMPLE_NUMBER32,
+		)
+		baAsn1.encodeContextUnsigned(buffer, 1, 1)
+		baAsn1.encodeTag(buffer, 2, true, authValue.length)
+		authValue.copy(buffer.buffer, buffer.offset)
+		buffer.offset += authValue.length
+		baAsn1.encodeClosingTag(buffer, 5)
+		baAsn1.encodeClosingTag(buffer, 13)
+		baAsn1.encodeClosingTag(buffer, 12)
+
+		const result = EventNotifyData.decode(buffer.buffer, 0)
+		assert.ok(result)
+		assert.strictEqual(result.eventType, EventType.ACCESS_EVENT)
+		assert.strictEqual(result.accessEventAccessEvent, AccessEvent.GRANTED)
+		assert.deepStrictEqual(result.accessEventStatusFlags, {
+			bitsUsed: 4,
+			value: [0b00001001],
+		})
+		assert.strictEqual(result.accessEventTag, 55)
+		assert.deepStrictEqual(result.accessEventTime, {
+			type: TimeStamp.SEQUENCE_NUMBER,
+			value: 88,
+		})
+		assert.deepStrictEqual(result.accessEventAccessCredential, {
+			deviceIdentifier: { type: 8, instance: 1319071 },
+			objectIdentifier: { type: 32, instance: 987 },
+		})
+		assert.deepStrictEqual(result.accessEventAuthenticationFactor, {
+			formatType: AuthenticationFactorType.SIMPLE_NUMBER32,
+			formatClass: 1,
+			value: authValue,
+		})
 	})
 })
