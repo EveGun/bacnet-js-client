@@ -657,6 +657,114 @@ export default class EventNotifyData extends BacnetService {
 		}
 	}
 
+	private static encodeRawValue(
+		buffer: EncodeBuffer,
+		rawValue: Buffer,
+	): void {
+		buffer.offset += rawValue.copy(buffer.buffer, buffer.offset)
+	}
+
+	private static encodeContextDouble(
+		buffer: EncodeBuffer,
+		tagNumber: number,
+		value: number,
+	): void {
+		baAsn1.encodeTag(buffer, tagNumber, true, 8)
+		buffer.buffer.writeDoubleBE(value, buffer.offset)
+		buffer.offset += 8
+	}
+
+	private static encodeContextDateTime(
+		buffer: EncodeBuffer,
+		tagNumber: number,
+		value: Date,
+	): void {
+		baAsn1.encodeOpeningTag(buffer, tagNumber)
+		baAsn1.encodeApplicationDate(buffer, value)
+		baAsn1.encodeApplicationTime(buffer, value)
+		baAsn1.encodeClosingTag(buffer, tagNumber)
+	}
+
+	private static encodeContextOctetString(
+		buffer: EncodeBuffer,
+		tagNumber: number,
+		value: Buffer,
+	): void {
+		baAsn1.encodeTag(buffer, tagNumber, true, value.length)
+		buffer.offset += value.copy(buffer.buffer, buffer.offset)
+	}
+
+	private static encodeContextUnknownValue(
+		buffer: EncodeBuffer,
+		tagNumber: number,
+		rawValue?: Buffer,
+		decodedValue?: BACNetAppData,
+	): void {
+		if (rawValue) {
+			EventNotifyData.encodeRawValue(buffer, rawValue)
+			return
+		}
+
+		if (decodedValue) {
+			baAsn1.encodeOpeningTag(buffer, tagNumber)
+			baAsn1.bacappEncodeApplicationData(buffer, decodedValue)
+			baAsn1.encodeClosingTag(buffer, tagNumber)
+			return
+		}
+
+		throw new Error(`Missing value for context tag ${tagNumber}`)
+	}
+
+	private static encodeContextDeviceObjectReference(
+		buffer: EncodeBuffer,
+		tagNumber: number,
+		value: BACNetDeviceObjectReference,
+	): void {
+		baAsn1.encodeOpeningTag(buffer, tagNumber)
+		if (value.deviceIdentifier) {
+			baAsn1.encodeContextObjectId(
+				buffer,
+				0,
+				value.deviceIdentifier.type,
+				value.deviceIdentifier.instance,
+			)
+		}
+		baAsn1.encodeContextObjectId(
+			buffer,
+			1,
+			value.objectIdentifier.type,
+			value.objectIdentifier.instance,
+		)
+		baAsn1.encodeClosingTag(buffer, tagNumber)
+	}
+
+	private static encodeContextAuthenticationFactor(
+		buffer: EncodeBuffer,
+		tagNumber: number,
+		value: BACNetAuthenticationFactor,
+	): void {
+		baAsn1.encodeOpeningTag(buffer, tagNumber)
+		baAsn1.encodeContextEnumerated(buffer, 0, value.formatType)
+		baAsn1.encodeContextUnsigned(buffer, 1, value.formatClass)
+		EventNotifyData.encodeContextOctetString(buffer, 2, value.value)
+		baAsn1.encodeClosingTag(buffer, tagNumber)
+	}
+
+	private static encodeDiscreteValueChoice(
+		buffer: EncodeBuffer,
+		value: BACNetAppData,
+	): void {
+		if (value.type === ApplicationTag.DATETIME) {
+			EventNotifyData.encodeContextDateTime(
+				buffer,
+				0,
+				value.value as Date,
+			)
+			return
+		}
+		baAsn1.bacappEncodeApplicationData(buffer, value)
+	}
+
 	private static decodePropertyState(
 		buffer: Buffer,
 		offset: number,
@@ -1882,6 +1990,12 @@ export default class EventNotifyData extends BacnetService {
 			case NotifyType.EVENT:
 				baAsn1.encodeOpeningTag(buffer, 12)
 
+				if (data.eventValuesRaw) {
+					EventNotifyData.encodeRawValue(buffer, data.eventValuesRaw)
+					baAsn1.encodeClosingTag(buffer, 12)
+					break
+				}
+
 				switch (data.eventType) {
 					case EventType.CHANGE_OF_BITSTRING:
 						baAsn1.encodeOpeningTag(buffer, 0)
@@ -2061,9 +2175,263 @@ export default class EventNotifyData extends BacnetService {
 						baAsn1.encodeClosingTag(buffer, 11)
 						break
 
-					case EventType.EXTENDED:
 					case EventType.COMMAND_FAILURE:
-						throw new Error('NotImplemented')
+						baAsn1.encodeOpeningTag(buffer, 3)
+						EventNotifyData.encodeContextUnknownValue(
+							buffer,
+							0,
+							data.commandFailureCommandValue,
+							data.commandFailureCommandValueDecoded,
+						)
+						baAsn1.encodeContextBitstring(
+							buffer,
+							1,
+							data.commandFailureStatusFlags,
+						)
+						EventNotifyData.encodeContextUnknownValue(
+							buffer,
+							2,
+							data.commandFailureFeedbackValue,
+							data.commandFailureFeedbackValueDecoded,
+						)
+						baAsn1.encodeClosingTag(buffer, 3)
+						break
+
+					case EventType.ACCESS_EVENT:
+						baAsn1.encodeOpeningTag(buffer, 13)
+						baAsn1.encodeContextEnumerated(
+							buffer,
+							0,
+							data.accessEventAccessEvent,
+						)
+						baAsn1.encodeContextBitstring(
+							buffer,
+							1,
+							data.accessEventStatusFlags,
+						)
+						baAsn1.encodeContextUnsigned(
+							buffer,
+							2,
+							data.accessEventTag,
+						)
+						baAsn1.bacappEncodeContextTimestamp(
+							buffer,
+							3,
+							data.accessEventTime,
+						)
+						EventNotifyData.encodeContextDeviceObjectReference(
+							buffer,
+							4,
+							data.accessEventAccessCredential,
+						)
+						if (data.accessEventAuthenticationFactor) {
+							EventNotifyData.encodeContextAuthenticationFactor(
+								buffer,
+								5,
+								data.accessEventAuthenticationFactor,
+							)
+						}
+						baAsn1.encodeClosingTag(buffer, 13)
+						break
+
+					case EventType.DOUBLE_OUT_OF_RANGE:
+						baAsn1.encodeOpeningTag(buffer, 14)
+						EventNotifyData.encodeContextDouble(
+							buffer,
+							0,
+							data.doubleOutOfRangeExceedingValue,
+						)
+						baAsn1.encodeContextBitstring(
+							buffer,
+							1,
+							data.doubleOutOfRangeStatusFlags,
+						)
+						EventNotifyData.encodeContextDouble(
+							buffer,
+							2,
+							data.doubleOutOfRangeDeadband,
+						)
+						EventNotifyData.encodeContextDouble(
+							buffer,
+							3,
+							data.doubleOutOfRangeExceededLimit,
+						)
+						baAsn1.encodeClosingTag(buffer, 14)
+						break
+
+					case EventType.SIGNED_OUT_OF_RANGE:
+						baAsn1.encodeOpeningTag(buffer, 15)
+						baAsn1.encodeContextSigned(
+							buffer,
+							0,
+							data.signedOutOfRangeExceedingValue,
+						)
+						baAsn1.encodeContextBitstring(
+							buffer,
+							1,
+							data.signedOutOfRangeStatusFlags,
+						)
+						baAsn1.encodeContextUnsigned(
+							buffer,
+							2,
+							data.signedOutOfRangeDeadband,
+						)
+						baAsn1.encodeContextSigned(
+							buffer,
+							3,
+							data.signedOutOfRangeExceededLimit,
+						)
+						baAsn1.encodeClosingTag(buffer, 15)
+						break
+
+					case EventType.UNSIGNED_OUT_OF_RANGE:
+						baAsn1.encodeOpeningTag(buffer, 16)
+						baAsn1.encodeContextUnsigned(
+							buffer,
+							0,
+							data.unsignedOutOfRangeExceedingValue,
+						)
+						baAsn1.encodeContextBitstring(
+							buffer,
+							1,
+							data.unsignedOutOfRangeStatusFlags,
+						)
+						baAsn1.encodeContextUnsigned(
+							buffer,
+							2,
+							data.unsignedOutOfRangeDeadband,
+						)
+						baAsn1.encodeContextUnsigned(
+							buffer,
+							3,
+							data.unsignedOutOfRangeExceededLimit,
+						)
+						baAsn1.encodeClosingTag(buffer, 16)
+						break
+
+					case EventType.CHANGE_OF_CHARACTERSTRING:
+						baAsn1.encodeOpeningTag(buffer, 17)
+						baAsn1.encodeContextCharacterString(
+							buffer,
+							0,
+							data.changeOfCharacterStringChangedValue,
+						)
+						baAsn1.encodeContextBitstring(
+							buffer,
+							1,
+							data.changeOfCharacterStringStatusFlags,
+						)
+						baAsn1.encodeContextCharacterString(
+							buffer,
+							2,
+							data.changeOfCharacterStringAlarmValue,
+						)
+						baAsn1.encodeClosingTag(buffer, 17)
+						break
+
+					case EventType.CHANGE_OF_STATUS_FLAGS:
+						baAsn1.encodeOpeningTag(buffer, 18)
+						if (
+							data.changeOfStatusFlagsPresentValue ||
+							data.changeOfStatusFlagsPresentValueDecoded
+						) {
+							EventNotifyData.encodeContextUnknownValue(
+								buffer,
+								0,
+								data.changeOfStatusFlagsPresentValue,
+								data.changeOfStatusFlagsPresentValueDecoded,
+							)
+						}
+						baAsn1.encodeContextBitstring(
+							buffer,
+							1,
+							data.changeOfStatusFlagsReferencedFlags,
+						)
+						baAsn1.encodeClosingTag(buffer, 18)
+						break
+
+					case EventType.CHANGE_OF_RELIABILITY:
+						baAsn1.encodeOpeningTag(buffer, 19)
+						baAsn1.encodeContextEnumerated(
+							buffer,
+							0,
+							data.changeOfReliabilityReliability,
+						)
+						baAsn1.encodeContextBitstring(
+							buffer,
+							1,
+							data.changeOfReliabilityStatusFlags,
+						)
+						EventNotifyData.encodeContextUnknownValue(
+							buffer,
+							2,
+							data.changeOfReliabilityPropertyValues,
+							data.changeOfReliabilityPropertyValuesDecoded,
+						)
+						baAsn1.encodeClosingTag(buffer, 19)
+						break
+
+					case EventType.CHANGE_OF_DISCRETE_VALUE:
+						baAsn1.encodeOpeningTag(buffer, 21)
+						baAsn1.encodeOpeningTag(buffer, 0)
+						EventNotifyData.encodeDiscreteValueChoice(
+							buffer,
+							data.changeOfDiscreteValueNewValue,
+						)
+						baAsn1.encodeClosingTag(buffer, 0)
+						baAsn1.encodeContextBitstring(
+							buffer,
+							1,
+							data.changeOfDiscreteValueStatusFlags,
+						)
+						baAsn1.encodeClosingTag(buffer, 21)
+						break
+
+					case EventType.CHANGE_OF_TIMER:
+						baAsn1.encodeOpeningTag(buffer, 22)
+						baAsn1.encodeContextEnumerated(
+							buffer,
+							0,
+							data.changeOfTimerNewState,
+						)
+						baAsn1.encodeContextBitstring(
+							buffer,
+							1,
+							data.changeOfTimerStatusFlags,
+						)
+						EventNotifyData.encodeContextDateTime(
+							buffer,
+							2,
+							data.changeOfTimerUpdateTime,
+						)
+						if (data.changeOfTimerLastStateChange != null) {
+							baAsn1.encodeContextEnumerated(
+								buffer,
+								3,
+								data.changeOfTimerLastStateChange,
+							)
+						}
+						if (data.changeOfTimerInitialTimeout != null) {
+							baAsn1.encodeContextUnsigned(
+								buffer,
+								4,
+								data.changeOfTimerInitialTimeout,
+							)
+						}
+						if (data.changeOfTimerExpirationTime) {
+							EventNotifyData.encodeContextDateTime(
+								buffer,
+								5,
+								data.changeOfTimerExpirationTime,
+							)
+						}
+						baAsn1.encodeClosingTag(buffer, 22)
+						break
+
+					case EventType.EXTENDED:
+						throw new Error(
+							'eventValuesRaw is required to encode EXTENDED event values',
+						)
 
 					default:
 						throw new Error('NotImplemented')
@@ -2073,7 +2441,7 @@ export default class EventNotifyData extends BacnetService {
 				break
 
 			case NotifyType.ACK_NOTIFICATION:
-				throw new Error('NotImplemented')
+				break
 
 			default:
 				break

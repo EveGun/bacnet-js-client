@@ -747,4 +747,173 @@ test.describe('bacnet - Services layer EventNotifyData unit', () => {
 			value: authValue,
 		})
 	})
+
+	test('should encode and decode command-failure event values', () => {
+		const buffer = utils.getBuffer()
+		const date = new Date()
+		date.setMilliseconds(880)
+		EventNotifyData.encode(buffer, {
+			processId: 13,
+			initiatingObjectId: { type: 8, instance: 1319071 },
+			eventObjectId: { type: 13, instance: 43 },
+			timeStamp: { type: TimeStamp.DATETIME, value: date },
+			notificationClass: 2,
+			priority: 12,
+			eventType: EventType.COMMAND_FAILURE,
+			notifyType: NotifyType.EVENT,
+			ackRequired: false,
+			fromState: 0,
+			toState: 1,
+			commandFailureCommandValueDecoded: {
+				type: ApplicationTag.SIGNED_INTEGER,
+				value: -11,
+			},
+			commandFailureStatusFlags: {
+				bitsUsed: 4,
+				value: [0b00001010],
+			},
+			commandFailureFeedbackValueDecoded: {
+				type: ApplicationTag.UNSIGNED_INTEGER,
+				value: 42,
+			},
+		})
+
+		const result = EventNotifyData.decode(buffer.buffer, 0)
+		assert.ok(result)
+		assert.strictEqual(result.eventType, EventType.COMMAND_FAILURE)
+		assert.ok(Buffer.isBuffer(result.commandFailureCommandValue))
+		assert.ok(result.commandFailureCommandValueDecoded)
+		assert.deepStrictEqual(result.commandFailureStatusFlags, {
+			bitsUsed: 4,
+			value: [0b00001010],
+		})
+		assert.ok(Buffer.isBuffer(result.commandFailureFeedbackValue))
+		assert.ok(result.commandFailureFeedbackValueDecoded)
+	})
+
+	test('should encode and decode access-event event values', () => {
+		const buffer = utils.getBuffer()
+		const date = new Date()
+		date.setMilliseconds(880)
+		const authValue = Buffer.from([0xde, 0xad, 0xbe, 0xef])
+		EventNotifyData.encode(buffer, {
+			processId: 14,
+			initiatingObjectId: { type: 8, instance: 1319071 },
+			eventObjectId: { type: 33, instance: 99 },
+			timeStamp: { type: TimeStamp.DATETIME, value: date },
+			notificationClass: 2,
+			priority: 12,
+			eventType: EventType.ACCESS_EVENT,
+			notifyType: NotifyType.EVENT,
+			ackRequired: false,
+			fromState: 0,
+			toState: 1,
+			accessEventAccessEvent: AccessEvent.GRANTED,
+			accessEventStatusFlags: {
+				bitsUsed: 4,
+				value: [0b00001001],
+			},
+			accessEventTag: 55,
+			accessEventTime: {
+				type: TimeStamp.SEQUENCE_NUMBER,
+				value: 88,
+			},
+			accessEventAccessCredential: {
+				deviceIdentifier: { type: 8, instance: 1319071 },
+				objectIdentifier: { type: 32, instance: 987 },
+			},
+			accessEventAuthenticationFactor: {
+				formatType: AuthenticationFactorType.SIMPLE_NUMBER32,
+				formatClass: 1,
+				value: authValue,
+			},
+		})
+
+		const result = EventNotifyData.decode(buffer.buffer, 0)
+		assert.ok(result)
+		assert.strictEqual(result.eventType, EventType.ACCESS_EVENT)
+		assert.strictEqual(result.accessEventAccessEvent, AccessEvent.GRANTED)
+		assert.deepStrictEqual(result.accessEventStatusFlags, {
+			bitsUsed: 4,
+			value: [0b00001001],
+		})
+		assert.strictEqual(result.accessEventTag, 55)
+		assert.deepStrictEqual(result.accessEventTime, {
+			type: TimeStamp.SEQUENCE_NUMBER,
+			value: 88,
+		})
+		assert.deepStrictEqual(result.accessEventAccessCredential, {
+			deviceIdentifier: { type: 8, instance: 1319071 },
+			objectIdentifier: { type: 32, instance: 987 },
+		})
+		assert.deepStrictEqual(result.accessEventAuthenticationFactor, {
+			formatType: AuthenticationFactorType.SIMPLE_NUMBER32,
+			formatClass: 1,
+			value: authValue,
+		})
+	})
+
+	test('should encode and decode notify-type ack-notification without event-values', () => {
+		const buffer = utils.getBuffer()
+		const date = new Date()
+		date.setMilliseconds(880)
+		EventNotifyData.encode(buffer, {
+			processId: 15,
+			initiatingObjectId: { type: 8, instance: 1319071 },
+			eventObjectId: { type: 0, instance: 1 },
+			timeStamp: { type: TimeStamp.DATETIME, value: date },
+			notificationClass: 3,
+			priority: 5,
+			eventType: EventType.CHANGE_OF_STATE,
+			notifyType: NotifyType.ACK_NOTIFICATION,
+			toState: 2,
+		})
+
+		const result = EventNotifyData.decode(buffer.buffer, 0)
+		assert.ok(result)
+		assert.strictEqual(result.notifyType, NotifyType.ACK_NOTIFICATION)
+		assert.strictEqual(result.ackRequired, undefined)
+		assert.strictEqual(result.fromState, undefined)
+		assert.strictEqual(result.toState, 2)
+	})
+
+	test('should encode extended event values using raw payload', () => {
+		const rawEventValues = utils.getBuffer()
+		baAsn1.encodeOpeningTag(rawEventValues, 9)
+		baAsn1.encodeContextUnsigned(rawEventValues, 0, 1001)
+		baAsn1.encodeContextUnsigned(rawEventValues, 1, 2002)
+		baAsn1.encodeOpeningTag(rawEventValues, 2)
+		baAsn1.bacappEncodeApplicationData(rawEventValues, {
+			type: ApplicationTag.UNSIGNED_INTEGER,
+			value: 1,
+		})
+		baAsn1.encodeClosingTag(rawEventValues, 2)
+		baAsn1.encodeClosingTag(rawEventValues, 9)
+
+		const buffer = utils.getBuffer()
+		const date = new Date()
+		date.setMilliseconds(880)
+		EventNotifyData.encode(buffer, {
+			processId: 16,
+			initiatingObjectId: { type: 8, instance: 1319071 },
+			eventObjectId: { type: 0, instance: 2 },
+			timeStamp: { type: TimeStamp.DATETIME, value: date },
+			notificationClass: 3,
+			priority: 5,
+			eventType: EventType.EXTENDED,
+			notifyType: NotifyType.EVENT,
+			ackRequired: false,
+			fromState: 0,
+			toState: 1,
+			eventValuesRaw: Buffer.from(
+				rawEventValues.buffer.subarray(0, rawEventValues.offset),
+			),
+		})
+
+		const result = EventNotifyData.decode(buffer.buffer, 0)
+		assert.ok(result)
+		assert.strictEqual(result.eventType, EventType.EXTENDED)
+		assert.strictEqual(result.notifyType, NotifyType.EVENT)
+		assert.strictEqual(result.toState, 1)
+	})
 })
