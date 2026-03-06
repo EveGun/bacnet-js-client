@@ -184,6 +184,17 @@ export interface BACNetDevObjRef {
 	deviceIndentifier: BACNetObjectID
 }
 
+export interface BACNetDeviceObjectReference {
+	deviceIdentifier?: BACNetObjectID
+	objectIdentifier: BACNetObjectID
+}
+
+export interface BACNetAuthenticationFactor {
+	formatType: number
+	formatClass: number
+	value: Buffer
+}
+
 /**
  * TODO: when the time comes, drop the default value for the `Tag` generic
  *       parameter to enforce type safety everywhere throughout the library.
@@ -850,8 +861,10 @@ export interface EventNotifyDataParams {
 
 	// COMMAND_FAILURE
 	commandFailureCommandValue?: Buffer
+	commandFailureCommandValueDecoded?: BACNetAppData
 	commandFailureStatusFlags?: BACNetBitString
 	commandFailureFeedbackValue?: Buffer
+	commandFailureFeedbackValueDecoded?: BACNetAppData
 
 	// DOUBLE_OUT_OF_RANGE
 	doubleOutOfRangeExceedingValue?: number
@@ -878,12 +891,14 @@ export interface EventNotifyDataParams {
 
 	// CHANGE_OF_STATUS_FLAGS
 	changeOfStatusFlagsPresentValue?: Buffer
+	changeOfStatusFlagsPresentValueDecoded?: BACNetAppData
 	changeOfStatusFlagsReferencedFlags?: BACNetBitString
 
 	// CHANGE_OF_RELIABILITY
 	changeOfReliabilityReliability?: number
 	changeOfReliabilityStatusFlags?: BACNetBitString
 	changeOfReliabilityPropertyValues?: Buffer
+	changeOfReliabilityPropertyValuesDecoded?: BACNetAppData
 
 	// CHANGE_OF_DISCRETE_VALUE
 	changeOfDiscreteValueNewValue?: BACNetAppData
@@ -896,6 +911,14 @@ export interface EventNotifyDataParams {
 	changeOfTimerLastStateChange?: number
 	changeOfTimerInitialTimeout?: number
 	changeOfTimerExpirationTime?: Date
+
+	// ACCESS_EVENT
+	accessEventAccessEvent?: number
+	accessEventStatusFlags?: BACNetBitString
+	accessEventTag?: number
+	accessEventTime?: BACNetTimestamp
+	accessEventAccessCredential?: BACNetDeviceObjectReference
+	accessEventAuthenticationFactor?: BACNetAuthenticationFactor
 }
 
 export interface EventNotifyDataResult extends EventNotifyDataParams {

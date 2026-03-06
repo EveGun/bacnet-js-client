@@ -10,6 +10,8 @@ import {
 } from '../enum'
 import {
 	BACNetAppData,
+	BACNetAuthenticationFactor,
+	BACNetDeviceObjectReference,
 	BACNetDevObjRef,
 	BACNetPropertyState,
 	EncodeBuffer,
@@ -215,6 +217,16 @@ export default class EventNotifyData extends BacnetService {
 		}
 	}
 
+	private static toAppData(
+		value: Pick<BACNetAppData, 'type' | 'value' | 'encoding'>,
+	): BACNetAppData {
+		return {
+			type: value.type,
+			value: value.value,
+			encoding: value.encoding,
+		}
+	}
+
 	private static decodeContextDateTime(
 		buffer: Buffer,
 		offset: number,
@@ -261,6 +273,106 @@ export default class EventNotifyData extends BacnetService {
 		}
 	}
 
+	private static decodeTimeStampChoice(
+		buffer: Buffer,
+		offset: number,
+	):
+		| {
+				len: number
+				value: EventNotifyDataParams['timeStamp']
+		  }
+		| undefined {
+		if (baAsn1.decodeIsContextTag(buffer, offset, TimeStamp.TIME)) {
+			const tagValue = baAsn1.decodeTagNumberAndValue(buffer, offset)
+			if (tagValue.value !== 4) return undefined
+			if (offset + tagValue.len + tagValue.value > buffer.length)
+				return undefined
+			const decodedValue = baAsn1.decodeBacnetTime(
+				buffer,
+				offset + tagValue.len,
+			)
+			return {
+				len: tagValue.len + decodedValue.len,
+				value: {
+					type: TimeStamp.TIME,
+					value: decodedValue.value,
+				},
+			}
+		}
+
+		if (
+			baAsn1.decodeIsContextTag(buffer, offset, TimeStamp.SEQUENCE_NUMBER)
+		) {
+			const decodedValue = EventNotifyData.decodeContextUnsigned(
+				buffer,
+				offset,
+				TimeStamp.SEQUENCE_NUMBER,
+			)
+			if (!decodedValue) return undefined
+			return {
+				len: decodedValue.len,
+				value: {
+					type: TimeStamp.SEQUENCE_NUMBER,
+					value: decodedValue.value,
+				},
+			}
+		}
+
+		const decodedValue = EventNotifyData.decodeContextDateTime(
+			buffer,
+			offset,
+			TimeStamp.DATETIME,
+		)
+		if (!decodedValue) return undefined
+		return {
+			len: decodedValue.len,
+			value: {
+				type: TimeStamp.DATETIME,
+				value: decodedValue.value,
+			},
+		}
+	}
+
+	private static decodeContextTimeStamp(
+		buffer: Buffer,
+		offset: number,
+		tagNumber: number,
+	):
+		| {
+				len: number
+				value: EventNotifyDataParams['timeStamp']
+		  }
+		| undefined {
+		let len = 0
+		const openingTag = EventNotifyData.decodeOpeningTag(
+			buffer,
+			offset + len,
+			tagNumber,
+		)
+		if (openingTag == null) return undefined
+		len += openingTag
+
+		const timeStamp = EventNotifyData.decodeTimeStampChoice(
+			buffer,
+			offset + len,
+		)
+		if (!timeStamp) return undefined
+		len += timeStamp.len
+
+		const closingTag = EventNotifyData.decodeClosingTag(
+			buffer,
+			offset + len,
+			tagNumber,
+		)
+		if (closingTag == null) return undefined
+		len += closingTag
+
+		return {
+			len,
+			value: timeStamp.value,
+		}
+	}
+
 	private static decodeContextRawValue(
 		buffer: Buffer,
 		offset: number,
@@ -294,6 +406,224 @@ export default class EventNotifyData extends BacnetService {
 		}
 	}
 
+	private static decodeContextOctetString(
+		buffer: Buffer,
+		offset: number,
+		tagNumber: number,
+	): { len: number; value: Buffer } | undefined {
+		if (!baAsn1.decodeIsContextTag(buffer, offset, tagNumber))
+			return undefined
+		const result = baAsn1.decodeTagNumberAndValue(buffer, offset)
+		if (offset + result.len + result.value > buffer.length) return undefined
+		return {
+			len: result.len + result.value,
+			value: buffer.subarray(
+				offset + result.len,
+				offset + result.len + result.value,
+			),
+		}
+	}
+
+	private static decodeContextUnknownValue(
+		buffer: Buffer,
+		offset: number,
+		tagNumber: number,
+	):
+		| {
+				len: number
+				raw: Buffer
+				decoded?: BACNetAppData
+		  }
+		| undefined {
+		const rawValue = EventNotifyData.decodeContextRawValue(
+			buffer,
+			offset,
+			tagNumber,
+		)
+		if (!rawValue) return undefined
+
+		const decodedValue = baAsn1.bacappDecodeApplicationData(
+			buffer,
+			offset,
+			offset + rawValue.len,
+			0,
+			0,
+		)
+		if (decodedValue && decodedValue.len === rawValue.len) {
+			return {
+				len: rawValue.len,
+				raw: rawValue.value,
+				decoded: EventNotifyData.toAppData(decodedValue),
+			}
+		}
+
+		return {
+			len: rawValue.len,
+			raw: rawValue.value,
+		}
+	}
+
+	private static decodeDeviceObjectReference(
+		buffer: Buffer,
+		offset: number,
+	):
+		| {
+				len: number
+				value: BACNetDeviceObjectReference
+		  }
+		| undefined {
+		let len = 0
+		const value = {} as BACNetDeviceObjectReference
+
+		const deviceIdentifier = EventNotifyData.decodeContextObjectId(
+			buffer,
+			offset + len,
+			0,
+		)
+		if (deviceIdentifier) {
+			len += deviceIdentifier.len
+			value.deviceIdentifier = deviceIdentifier.value
+		}
+
+		const objectIdentifier = EventNotifyData.decodeContextObjectId(
+			buffer,
+			offset + len,
+			1,
+		)
+		if (!objectIdentifier) return undefined
+		len += objectIdentifier.len
+		value.objectIdentifier = objectIdentifier.value
+
+		return {
+			len,
+			value,
+		}
+	}
+
+	private static decodeContextDeviceObjectReference(
+		buffer: Buffer,
+		offset: number,
+		tagNumber: number,
+	):
+		| {
+				len: number
+				value: BACNetDeviceObjectReference
+		  }
+		| undefined {
+		let len = 0
+		const openingTag = EventNotifyData.decodeOpeningTag(
+			buffer,
+			offset + len,
+			tagNumber,
+		)
+		if (openingTag == null) return undefined
+		len += openingTag
+
+		const reference = EventNotifyData.decodeDeviceObjectReference(
+			buffer,
+			offset + len,
+		)
+		if (!reference) return undefined
+		len += reference.len
+
+		const closingTag = EventNotifyData.decodeClosingTag(
+			buffer,
+			offset + len,
+			tagNumber,
+		)
+		if (closingTag == null) return undefined
+		len += closingTag
+
+		return {
+			len,
+			value: reference.value,
+		}
+	}
+
+	private static decodeAuthenticationFactor(
+		buffer: Buffer,
+		offset: number,
+	):
+		| {
+				len: number
+				value: BACNetAuthenticationFactor
+		  }
+		| undefined {
+		let len = 0
+		const formatType = EventNotifyData.decodeContextEnumerated(
+			buffer,
+			offset + len,
+			0,
+		)
+		if (!formatType) return undefined
+		len += formatType.len
+
+		const formatClass = EventNotifyData.decodeContextUnsigned(
+			buffer,
+			offset + len,
+			1,
+		)
+		if (!formatClass) return undefined
+		len += formatClass.len
+
+		const value = EventNotifyData.decodeContextOctetString(
+			buffer,
+			offset + len,
+			2,
+		)
+		if (!value) return undefined
+		len += value.len
+
+		return {
+			len,
+			value: {
+				formatType: formatType.value,
+				formatClass: formatClass.value,
+				value: value.value,
+			},
+		}
+	}
+
+	private static decodeContextAuthenticationFactor(
+		buffer: Buffer,
+		offset: number,
+		tagNumber: number,
+	):
+		| {
+				len: number
+				value: BACNetAuthenticationFactor
+		  }
+		| undefined {
+		let len = 0
+		const openingTag = EventNotifyData.decodeOpeningTag(
+			buffer,
+			offset + len,
+			tagNumber,
+		)
+		if (openingTag == null) return undefined
+		len += openingTag
+
+		const factor = EventNotifyData.decodeAuthenticationFactor(
+			buffer,
+			offset + len,
+		)
+		if (!factor) return undefined
+		len += factor.len
+
+		const closingTag = EventNotifyData.decodeClosingTag(
+			buffer,
+			offset + len,
+			tagNumber,
+		)
+		if (closingTag == null) return undefined
+		len += closingTag
+
+		return {
+			len,
+			value: factor.value,
+		}
+	}
+
 	private static decodeDiscreteValueChoice(
 		buffer: Buffer,
 		offset: number,
@@ -323,11 +653,7 @@ export default class EventNotifyData extends BacnetService {
 		if (!decodedValue) return undefined
 		return {
 			len: decodedValue.len,
-			value: {
-				type: decodedValue.type,
-				value: decodedValue.value,
-				encoding: decodedValue.encoding,
-			},
+			value: EventNotifyData.toAppData(decodedValue),
 		}
 	}
 
@@ -501,6 +827,7 @@ export default class EventNotifyData extends BacnetService {
 			case EventType.CHANGE_OF_LIFE_SAFETY:
 			case EventType.BUFFER_READY:
 			case EventType.UNSIGNED_RANGE:
+			case EventType.ACCESS_EVENT:
 			case EventType.DOUBLE_OUT_OF_RANGE:
 			case EventType.SIGNED_OUT_OF_RANGE:
 			case EventType.UNSIGNED_OUT_OF_RANGE:
@@ -686,14 +1013,18 @@ export default class EventNotifyData extends BacnetService {
 				if (openingTag3 == null) return undefined
 				len += openingTag3
 
-				const commandValue = EventNotifyData.decodeContextRawValue(
+				const commandValue = EventNotifyData.decodeContextUnknownValue(
 					buffer,
 					offset + len,
 					0,
 				)
 				if (!commandValue) return undefined
 				len += commandValue.len
-				eventData.commandFailureCommandValue = commandValue.value
+				eventData.commandFailureCommandValue = commandValue.raw
+				if (commandValue.decoded) {
+					eventData.commandFailureCommandValueDecoded =
+						commandValue.decoded
+				}
 
 				const statusFlags = EventNotifyData.decodeContextBitstring(
 					buffer,
@@ -704,14 +1035,18 @@ export default class EventNotifyData extends BacnetService {
 				len += statusFlags.len
 				eventData.commandFailureStatusFlags = statusFlags.value
 
-				const feedbackValue = EventNotifyData.decodeContextRawValue(
+				const feedbackValue = EventNotifyData.decodeContextUnknownValue(
 					buffer,
 					offset + len,
 					2,
 				)
 				if (!feedbackValue) return undefined
 				len += feedbackValue.len
-				eventData.commandFailureFeedbackValue = feedbackValue.value
+				eventData.commandFailureFeedbackValue = feedbackValue.raw
+				if (feedbackValue.decoded) {
+					eventData.commandFailureFeedbackValueDecoded =
+						feedbackValue.decoded
+				}
 
 				const closingTag3 = EventNotifyData.decodeClosingTag(
 					buffer,
@@ -980,6 +1315,82 @@ export default class EventNotifyData extends BacnetService {
 				len += closingTag11
 				break
 			}
+			case EventType.ACCESS_EVENT: {
+				const openingTag13 = EventNotifyData.decodeOpeningTag(
+					buffer,
+					offset + len,
+					13,
+				)
+				if (openingTag13 == null) return undefined
+				len += openingTag13
+
+				const accessEvent = EventNotifyData.decodeContextEnumerated(
+					buffer,
+					offset + len,
+					0,
+				)
+				if (!accessEvent) return undefined
+				len += accessEvent.len
+				eventData.accessEventAccessEvent = accessEvent.value
+
+				const statusFlags = EventNotifyData.decodeContextBitstring(
+					buffer,
+					offset + len,
+					1,
+				)
+				if (!statusFlags) return undefined
+				len += statusFlags.len
+				eventData.accessEventStatusFlags = statusFlags.value
+
+				const accessEventTag = EventNotifyData.decodeContextUnsigned(
+					buffer,
+					offset + len,
+					2,
+				)
+				if (!accessEventTag) return undefined
+				len += accessEventTag.len
+				eventData.accessEventTag = accessEventTag.value
+
+				const accessEventTime = EventNotifyData.decodeContextTimeStamp(
+					buffer,
+					offset + len,
+					3,
+				)
+				if (!accessEventTime) return undefined
+				len += accessEventTime.len
+				eventData.accessEventTime = accessEventTime.value
+
+				const accessCredential =
+					EventNotifyData.decodeContextDeviceObjectReference(
+						buffer,
+						offset + len,
+						4,
+					)
+				if (!accessCredential) return undefined
+				len += accessCredential.len
+				eventData.accessEventAccessCredential = accessCredential.value
+
+				const authenticationFactor =
+					EventNotifyData.decodeContextAuthenticationFactor(
+						buffer,
+						offset + len,
+						5,
+					)
+				if (authenticationFactor) {
+					len += authenticationFactor.len
+					eventData.accessEventAuthenticationFactor =
+						authenticationFactor.value
+				}
+
+				const closingTag13 = EventNotifyData.decodeClosingTag(
+					buffer,
+					offset + len,
+					13,
+				)
+				if (closingTag13 == null) return undefined
+				len += closingTag13
+				break
+			}
 			case EventType.DOUBLE_OUT_OF_RANGE: {
 				const openingTag14 = EventNotifyData.decodeOpeningTag(
 					buffer,
@@ -1199,15 +1610,18 @@ export default class EventNotifyData extends BacnetService {
 				if (openingTag18 == null) return undefined
 				len += openingTag18
 
-				const presentValue = EventNotifyData.decodeContextRawValue(
+				const presentValue = EventNotifyData.decodeContextUnknownValue(
 					buffer,
 					offset + len,
 					0,
 				)
 				if (presentValue) {
 					len += presentValue.len
-					eventData.changeOfStatusFlagsPresentValue =
-						presentValue.value
+					eventData.changeOfStatusFlagsPresentValue = presentValue.raw
+					if (presentValue.decoded) {
+						eventData.changeOfStatusFlagsPresentValueDecoded =
+							presentValue.decoded
+					}
 				}
 
 				const referencedFlags = EventNotifyData.decodeContextBitstring(
@@ -1256,15 +1670,19 @@ export default class EventNotifyData extends BacnetService {
 				len += statusFlags.len
 				eventData.changeOfReliabilityStatusFlags = statusFlags.value
 
-				const propertyValues = EventNotifyData.decodeContextRawValue(
-					buffer,
-					offset + len,
-					2,
-				)
+				const propertyValues =
+					EventNotifyData.decodeContextUnknownValue(
+						buffer,
+						offset + len,
+						2,
+					)
 				if (!propertyValues) return undefined
 				len += propertyValues.len
-				eventData.changeOfReliabilityPropertyValues =
-					propertyValues.value
+				eventData.changeOfReliabilityPropertyValues = propertyValues.raw
+				if (propertyValues.decoded) {
+					eventData.changeOfReliabilityPropertyValuesDecoded =
+						propertyValues.decoded
+				}
 
 				const closingTag19 = EventNotifyData.decodeClosingTag(
 					buffer,
@@ -1701,64 +2119,14 @@ export default class EventNotifyData extends BacnetService {
 			instance: decodedValue.instance,
 		}
 
-		const openingTag3 = EventNotifyData.decodeOpeningTag(
+		const timeStamp = EventNotifyData.decodeContextTimeStamp(
 			buffer,
 			offset + len,
 			3,
 		)
-		if (openingTag3 == null) return undefined
-		len += openingTag3
-
-		if (baAsn1.decodeIsContextTag(buffer, offset + len, TimeStamp.TIME)) {
-			result = baAsn1.decodeTagNumberAndValue(buffer, offset + len)
-			len += result.len
-			if (result.value !== 4) return undefined
-			if (offset + len + result.value > buffer.length) return undefined
-			decodedValue = baAsn1.decodeBacnetTime(buffer, offset + len)
-			len += decodedValue.len
-			eventData.timeStamp = {
-				type: TimeStamp.TIME,
-				value: decodedValue.value,
-			}
-		} else if (
-			baAsn1.decodeIsContextTag(
-				buffer,
-				offset + len,
-				TimeStamp.SEQUENCE_NUMBER,
-			)
-		) {
-			decodedValue = EventNotifyData.decodeContextUnsigned(
-				buffer,
-				offset + len,
-				TimeStamp.SEQUENCE_NUMBER,
-			)
-			if (!decodedValue) return undefined
-			len += decodedValue.len
-			eventData.timeStamp = {
-				type: TimeStamp.SEQUENCE_NUMBER,
-				value: decodedValue.value,
-			}
-		} else {
-			decodedValue = EventNotifyData.decodeContextDateTime(
-				buffer,
-				offset + len,
-				TimeStamp.DATETIME,
-			)
-			if (!decodedValue) return undefined
-			len += decodedValue.len
-			eventData.timeStamp = {
-				type: TimeStamp.DATETIME,
-				value: decodedValue.value,
-			}
-		}
-
-		const closingTag3 = EventNotifyData.decodeClosingTag(
-			buffer,
-			offset + len,
-			3,
-		)
-		if (closingTag3 == null) return undefined
-		len += closingTag3
+		if (!timeStamp) return undefined
+		len += timeStamp.len
+		eventData.timeStamp = timeStamp.value
 
 		if (!baAsn1.decodeIsContextTag(buffer, offset + len, 4))
 			return undefined
