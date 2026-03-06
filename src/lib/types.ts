@@ -888,6 +888,9 @@ export interface EventNotifyDataParams {
 	unsignedRangeStatusFlags?: BACNetBitString
 	unsignedRangeExceededLimit?: number
 
+	// raw BACnetNotificationParameters payload (includes choice tag(s))
+	eventValuesRaw?: Buffer
+
 	// COMMAND_FAILURE
 	commandFailureCommandValue?: Buffer
 	commandFailureCommandValueDecoded?: BACNetAppData
