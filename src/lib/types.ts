@@ -742,14 +742,64 @@ export interface ReadRangePayload extends BasicServicePayload {
 	values: BACNetAppData[]
 }
 
+/**
+ * A decoded BACnet log record datum (the 'value' portion of a log entry).
+ * Matches ASHRAE 135 Table 12-15 log-datum CHOICE context tags 0-8.
+ */
+export type LogDatum =
+	| { type: 'log-status'; value: { logDisabled: boolean; bufferPurged: boolean; logInterrupted: boolean } }
+	| { type: 'boolean-value'; value: boolean }
+	| { type: 'real-value'; value: number }
+	| { type: 'enum-value'; value: number }
+	| { type: 'unsigned-value'; value: number }
+	| { type: 'integer-value'; value: number }
+	| { type: 'binary-value'; value: boolean }
+	| { type: 'double-value'; value: number }
+	| { type: 'octetstring-value'; value: Buffer }
+	| { type: 'characterstring-value'; value: string }
+	| { type: 'bitstring-value'; value: BACNetBitString }
+	| { type: 'date-value'; value: Date }
+	| { type: 'time-value'; value: Date }
+	| { type: 'object-identifier-value'; value: BACNetObjectID }
+	| { type: 'null-value'; value: null }
+	| { type: 'failure'; value: { errorClass: number; errorCode: number } }
+	| { type: 'time-change'; value: number }
+	| { type: 'any-value'; value: ApplicationData }
+
+/** A single decoded trend log record. */
+export interface LogRecord {
+	timestamp: Date
+	/** The logged value — one of the LogDatum variants */
+	logDatum: LogDatum
+	/** Status flags at the time of this record (OPTIONAL in the standard) */
+	statusFlags?: {
+		inAlarm: boolean
+		fault: boolean
+		overridden: boolean
+		outOfService: boolean
+	}
+}
+
 export interface ReadRangeAcknowledge {
 	objectId: BACNetObjectID
 	property: BACNetPropertyID
 	resultFlag: BACNetBitString
 	itemCount: number
 	rangeBuffer: Buffer
-	values?: any[]
+	/** Decoded log records when the response was parseable */
+	values?: LogRecord[]
 	len: number
+}
+
+export interface ReadRangeOptions extends ServiceOptions {
+	/** Property to read (default: LOG_BUFFER = 131) */
+	propertyId?: number
+	/** Array index (default: ARRAY_ALL) */
+	arrayIndex?: number
+	/** Range selection type (default: BY_POSITION) */
+	requestType?: number
+	/** Reference time for BY_TIME requests */
+	time?: Date
 }
 
 export interface EnrollmentSummary {
