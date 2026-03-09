@@ -3,6 +3,11 @@ import assert from 'node:assert'
 
 import * as utils from './utils'
 import { WritePropertyMultiple } from '../../src/lib/services'
+import {
+	ApplicationTag,
+	ObjectType,
+	PropertyIdentifier,
+} from '../../src/lib/enum'
 
 function removeLen(obj: any): any {
 	if (obj === null || typeof obj !== 'object') return obj
@@ -186,5 +191,70 @@ test.describe('bacnet - Services layer WritePropertyMultiple unit', () => {
 				},
 			],
 		})
+	})
+
+	test('should preserve array index 0 when encoding and decoding', () => {
+		const buffer = utils.getBuffer()
+		WritePropertyMultiple.encode(buffer, { type: 39, instance: 2400 }, [
+			{
+				property: { id: 81, index: 0 },
+				value: [{ type: 2, value: 7 }],
+				priority: 0,
+			},
+		])
+		const result = WritePropertyMultiple.decode(
+			buffer.buffer,
+			0,
+			buffer.offset,
+		)
+		const cleanResult = removeLen(result)
+		assert.equal(cleanResult.values[0].property.index, 0)
+		assert.equal(cleanResult.values[0].value[0].type, 2)
+		assert.equal(cleanResult.values[0].value[0].value, 7)
+	})
+
+	test('should encode and decode weekly schedule through write-property-multiple', () => {
+		const buffer = utils.getBuffer()
+		const weekly = [
+			[
+				{
+					time: {
+						type: ApplicationTag.TIME,
+						value: new Date(2024, 0, 1, 8, 0),
+					},
+					value: { type: ApplicationTag.REAL, value: 21.5 },
+				},
+			],
+			[],
+			[],
+			[],
+			[],
+			[],
+			[],
+		]
+		WritePropertyMultiple.encode(
+			buffer,
+			{ type: ObjectType.SCHEDULE, instance: 1 },
+			[
+				{
+					property: {
+						id: PropertyIdentifier.WEEKLY_SCHEDULE,
+						index: 0xffffffff,
+					},
+					value: weekly as any,
+					priority: 0,
+				},
+			],
+		)
+		const result = WritePropertyMultiple.decode(
+			buffer.buffer,
+			0,
+			buffer.offset,
+		)
+		assert.ok(result)
+		const value = result.values[0].value[0]
+		assert.equal(value.type, ApplicationTag.WEEKLY_SCHEDULE)
+		assert.equal((value.value as any[]).length, 7)
+		assert.equal((value.value as any[])[0][0].value?.value, 21.5)
 	})
 })
