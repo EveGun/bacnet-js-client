@@ -765,6 +765,166 @@ export default class EventNotifyData extends BacnetService {
 		baAsn1.bacappEncodeApplicationData(buffer, value)
 	}
 
+	private static isSet<T>(value: T | null | undefined): value is T {
+		return value !== undefined && value !== null
+	}
+
+	private static hasTypedEventValues(data: EventNotifyDataParams): boolean {
+		switch (data.eventType) {
+			case EventType.CHANGE_OF_BITSTRING:
+				return (
+					EventNotifyData.isSet(
+						data.changeOfBitstringReferencedBitString,
+					) &&
+					EventNotifyData.isSet(data.changeOfBitstringStatusFlags)
+				)
+			case EventType.CHANGE_OF_STATE:
+				return (
+					EventNotifyData.isSet(data.changeOfStateNewState) &&
+					EventNotifyData.isSet(data.changeOfStateStatusFlags)
+				)
+			case EventType.CHANGE_OF_VALUE:
+				return (
+					EventNotifyData.isSet(data.changeOfValueTag) &&
+					EventNotifyData.isSet(data.changeOfValueStatusFlags) &&
+					((data.changeOfValueTag === CovType.REAL &&
+						EventNotifyData.isSet(data.changeOfValueChangeValue)) ||
+						(data.changeOfValueTag === CovType.BIT_STRING &&
+							EventNotifyData.isSet(
+								data.changeOfValueChangedBits,
+							)))
+				)
+			case EventType.COMMAND_FAILURE:
+				return (
+					(EventNotifyData.isSet(data.commandFailureCommandValue) ||
+						EventNotifyData.isSet(
+							data.commandFailureCommandValueDecoded,
+						)) &&
+					EventNotifyData.isSet(data.commandFailureStatusFlags) &&
+					(EventNotifyData.isSet(data.commandFailureFeedbackValue) ||
+						EventNotifyData.isSet(
+							data.commandFailureFeedbackValueDecoded,
+						))
+				)
+			case EventType.FLOATING_LIMIT:
+				return (
+					EventNotifyData.isSet(data.floatingLimitReferenceValue) &&
+					EventNotifyData.isSet(data.floatingLimitStatusFlags) &&
+					EventNotifyData.isSet(data.floatingLimitSetPointValue) &&
+					EventNotifyData.isSet(data.floatingLimitErrorLimit)
+				)
+			case EventType.OUT_OF_RANGE:
+				return (
+					EventNotifyData.isSet(data.outOfRangeExceedingValue) &&
+					EventNotifyData.isSet(data.outOfRangeStatusFlags) &&
+					EventNotifyData.isSet(data.outOfRangeDeadband) &&
+					EventNotifyData.isSet(data.outOfRangeExceededLimit)
+				)
+			case EventType.CHANGE_OF_LIFE_SAFETY:
+				return (
+					EventNotifyData.isSet(data.changeOfLifeSafetyNewState) &&
+					EventNotifyData.isSet(data.changeOfLifeSafetyNewMode) &&
+					EventNotifyData.isSet(data.changeOfLifeSafetyStatusFlags) &&
+					EventNotifyData.isSet(
+						data.changeOfLifeSafetyOperationExpected,
+					)
+				)
+			case EventType.BUFFER_READY:
+				return (
+					EventNotifyData.isSet(data.bufferReadyBufferProperty) &&
+					EventNotifyData.isSet(
+						data.bufferReadyPreviousNotification,
+					) &&
+					EventNotifyData.isSet(data.bufferReadyCurrentNotification)
+				)
+			case EventType.UNSIGNED_RANGE:
+				return (
+					EventNotifyData.isSet(data.unsignedRangeExceedingValue) &&
+					EventNotifyData.isSet(data.unsignedRangeStatusFlags) &&
+					EventNotifyData.isSet(data.unsignedRangeExceededLimit)
+				)
+			case EventType.ACCESS_EVENT:
+				return (
+					EventNotifyData.isSet(data.accessEventAccessEvent) &&
+					EventNotifyData.isSet(data.accessEventStatusFlags) &&
+					EventNotifyData.isSet(data.accessEventTag) &&
+					EventNotifyData.isSet(data.accessEventTime) &&
+					EventNotifyData.isSet(data.accessEventAccessCredential)
+				)
+			case EventType.DOUBLE_OUT_OF_RANGE:
+				return (
+					EventNotifyData.isSet(
+						data.doubleOutOfRangeExceedingValue,
+					) &&
+					EventNotifyData.isSet(data.doubleOutOfRangeStatusFlags) &&
+					EventNotifyData.isSet(data.doubleOutOfRangeDeadband) &&
+					EventNotifyData.isSet(data.doubleOutOfRangeExceededLimit)
+				)
+			case EventType.SIGNED_OUT_OF_RANGE:
+				return (
+					EventNotifyData.isSet(
+						data.signedOutOfRangeExceedingValue,
+					) &&
+					EventNotifyData.isSet(data.signedOutOfRangeStatusFlags) &&
+					EventNotifyData.isSet(data.signedOutOfRangeDeadband) &&
+					EventNotifyData.isSet(data.signedOutOfRangeExceededLimit)
+				)
+			case EventType.UNSIGNED_OUT_OF_RANGE:
+				return (
+					EventNotifyData.isSet(
+						data.unsignedOutOfRangeExceedingValue,
+					) &&
+					EventNotifyData.isSet(data.unsignedOutOfRangeStatusFlags) &&
+					EventNotifyData.isSet(data.unsignedOutOfRangeDeadband) &&
+					EventNotifyData.isSet(data.unsignedOutOfRangeExceededLimit)
+				)
+			case EventType.CHANGE_OF_CHARACTERSTRING:
+				return (
+					EventNotifyData.isSet(
+						data.changeOfCharacterStringChangedValue,
+					) &&
+					EventNotifyData.isSet(
+						data.changeOfCharacterStringStatusFlags,
+					) &&
+					EventNotifyData.isSet(
+						data.changeOfCharacterStringAlarmValue,
+					)
+				)
+			case EventType.CHANGE_OF_STATUS_FLAGS:
+				return EventNotifyData.isSet(
+					data.changeOfStatusFlagsReferencedFlags,
+				)
+			case EventType.CHANGE_OF_RELIABILITY:
+				return (
+					EventNotifyData.isSet(
+						data.changeOfReliabilityReliability,
+					) &&
+					EventNotifyData.isSet(
+						data.changeOfReliabilityStatusFlags,
+					) &&
+					(EventNotifyData.isSet(
+						data.changeOfReliabilityPropertyValues,
+					) ||
+						EventNotifyData.isSet(
+							data.changeOfReliabilityPropertyValuesDecoded,
+						))
+				)
+			case EventType.CHANGE_OF_DISCRETE_VALUE:
+				return (
+					EventNotifyData.isSet(data.changeOfDiscreteValueNewValue) &&
+					EventNotifyData.isSet(data.changeOfDiscreteValueStatusFlags)
+				)
+			case EventType.CHANGE_OF_TIMER:
+				return (
+					EventNotifyData.isSet(data.changeOfTimerNewState) &&
+					EventNotifyData.isSet(data.changeOfTimerStatusFlags) &&
+					EventNotifyData.isSet(data.changeOfTimerUpdateTime)
+				)
+			default:
+				return false
+		}
+	}
+
 	private static decodePropertyState(
 		buffer: Buffer,
 		offset: number,
@@ -1973,478 +2133,461 @@ export default class EventNotifyData extends BacnetService {
 
 		baAsn1.encodeContextEnumerated(buffer, 8, data.notifyType)
 
-		switch (data.notifyType) {
-			case NotifyType.ALARM:
-			case NotifyType.EVENT:
-				baAsn1.encodeContextBoolean(buffer, 9, data.ackRequired)
-				baAsn1.encodeContextEnumerated(buffer, 10, data.fromState)
-				break
-			default:
-				break
+		if (EventNotifyData.isSet(data.ackRequired)) {
+			baAsn1.encodeContextBoolean(buffer, 9, data.ackRequired)
+		}
+		if (EventNotifyData.isSet(data.fromState)) {
+			baAsn1.encodeContextEnumerated(buffer, 10, data.fromState)
 		}
 
 		baAsn1.encodeContextEnumerated(buffer, 11, data.toState)
 
-		switch (data.notifyType) {
-			case NotifyType.ALARM:
-			case NotifyType.EVENT:
-				baAsn1.encodeOpeningTag(buffer, 12)
+		const shouldEncodeEventValues =
+			EventNotifyData.isSet(data.eventValuesRaw) ||
+			EventNotifyData.hasTypedEventValues(data)
+		if (shouldEncodeEventValues) {
+			baAsn1.encodeOpeningTag(buffer, 12)
 
-				if (data.eventValuesRaw) {
-					EventNotifyData.encodeRawValue(buffer, data.eventValuesRaw)
-					baAsn1.encodeClosingTag(buffer, 12)
+			if (EventNotifyData.isSet(data.eventValuesRaw)) {
+				EventNotifyData.encodeRawValue(buffer, data.eventValuesRaw)
+				baAsn1.encodeClosingTag(buffer, 12)
+				return
+			}
+
+			switch (data.eventType) {
+				case EventType.CHANGE_OF_BITSTRING:
+					baAsn1.encodeOpeningTag(buffer, 0)
+					baAsn1.encodeContextBitstring(
+						buffer,
+						0,
+						data.changeOfBitstringReferencedBitString,
+					)
+					baAsn1.encodeContextBitstring(
+						buffer,
+						1,
+						data.changeOfBitstringStatusFlags,
+					)
+					baAsn1.encodeClosingTag(buffer, 0)
 					break
-				}
 
-				switch (data.eventType) {
-					case EventType.CHANGE_OF_BITSTRING:
-						baAsn1.encodeOpeningTag(buffer, 0)
-						baAsn1.encodeContextBitstring(
-							buffer,
-							0,
-							data.changeOfBitstringReferencedBitString,
-						)
-						baAsn1.encodeContextBitstring(
-							buffer,
-							1,
-							data.changeOfBitstringStatusFlags,
-						)
-						baAsn1.encodeClosingTag(buffer, 0)
-						break
+				case EventType.CHANGE_OF_STATE:
+					baAsn1.encodeOpeningTag(buffer, 1)
+					baAsn1.encodeOpeningTag(buffer, 0)
+					baAsn1.bacappEncodePropertyState(
+						buffer,
+						data.changeOfStateNewState,
+					)
+					baAsn1.encodeClosingTag(buffer, 0)
+					baAsn1.encodeContextBitstring(
+						buffer,
+						1,
+						data.changeOfStateStatusFlags,
+					)
+					baAsn1.encodeClosingTag(buffer, 1)
+					break
 
-					case EventType.CHANGE_OF_STATE:
-						baAsn1.encodeOpeningTag(buffer, 1)
-						baAsn1.encodeOpeningTag(buffer, 0)
-						baAsn1.bacappEncodePropertyState(
-							buffer,
-							data.changeOfStateNewState,
-						)
-						baAsn1.encodeClosingTag(buffer, 0)
-						baAsn1.encodeContextBitstring(
-							buffer,
-							1,
-							data.changeOfStateStatusFlags,
-						)
-						baAsn1.encodeClosingTag(buffer, 1)
-						break
+				case EventType.CHANGE_OF_VALUE:
+					baAsn1.encodeOpeningTag(buffer, 2)
+					baAsn1.encodeOpeningTag(buffer, 0)
 
-					case EventType.CHANGE_OF_VALUE:
-						baAsn1.encodeOpeningTag(buffer, 2)
-						baAsn1.encodeOpeningTag(buffer, 0)
-
-						switch (data.changeOfValueTag) {
-							case CovType.REAL:
-								baAsn1.encodeContextReal(
-									buffer,
-									1,
-									data.changeOfValueChangeValue,
-								)
-								break
-							case CovType.BIT_STRING:
-								baAsn1.encodeContextBitstring(
-									buffer,
-									0,
-									data.changeOfValueChangedBits,
-								)
-								break
-							default:
-								throw new Error('NotImplemented')
-						}
-
-						baAsn1.encodeClosingTag(buffer, 0)
-						baAsn1.encodeContextBitstring(
-							buffer,
-							1,
-							data.changeOfValueStatusFlags,
-						)
-						baAsn1.encodeClosingTag(buffer, 2)
-						break
-
-					case EventType.FLOATING_LIMIT:
-						baAsn1.encodeOpeningTag(buffer, 4)
-						baAsn1.encodeContextReal(
-							buffer,
-							0,
-							data.floatingLimitReferenceValue,
-						)
-						baAsn1.encodeContextBitstring(
-							buffer,
-							1,
-							data.floatingLimitStatusFlags,
-						)
-						baAsn1.encodeContextReal(
-							buffer,
-							2,
-							data.floatingLimitSetPointValue,
-						)
-						baAsn1.encodeContextReal(
-							buffer,
-							3,
-							data.floatingLimitErrorLimit,
-						)
-						baAsn1.encodeClosingTag(buffer, 4)
-						break
-
-					case EventType.OUT_OF_RANGE:
-						baAsn1.encodeOpeningTag(buffer, 5)
-						baAsn1.encodeContextReal(
-							buffer,
-							0,
-							data.outOfRangeExceedingValue,
-						)
-						baAsn1.encodeContextBitstring(
-							buffer,
-							1,
-							data.outOfRangeStatusFlags,
-						)
-						baAsn1.encodeContextReal(
-							buffer,
-							2,
-							data.outOfRangeDeadband,
-						)
-						baAsn1.encodeContextReal(
-							buffer,
-							3,
-							data.outOfRangeExceededLimit,
-						)
-						baAsn1.encodeClosingTag(buffer, 5)
-						break
-
-					case EventType.CHANGE_OF_LIFE_SAFETY:
-						baAsn1.encodeOpeningTag(buffer, 8)
-						baAsn1.encodeContextEnumerated(
-							buffer,
-							0,
-							data.changeOfLifeSafetyNewState,
-						)
-						baAsn1.encodeContextEnumerated(
-							buffer,
-							1,
-							data.changeOfLifeSafetyNewMode,
-						)
-						baAsn1.encodeContextBitstring(
-							buffer,
-							2,
-							data.changeOfLifeSafetyStatusFlags,
-						)
-						baAsn1.encodeContextEnumerated(
-							buffer,
-							3,
-							data.changeOfLifeSafetyOperationExpected,
-						)
-						baAsn1.encodeClosingTag(buffer, 8)
-						break
-
-					case EventType.BUFFER_READY:
-						baAsn1.encodeOpeningTag(buffer, 10)
-						baAsn1.bacappEncodeContextDeviceObjPropertyRef(
-							buffer,
-							0,
-							data.bufferReadyBufferProperty,
-						)
-						baAsn1.encodeContextUnsigned(
-							buffer,
-							1,
-							data.bufferReadyPreviousNotification,
-						)
-						baAsn1.encodeContextUnsigned(
-							buffer,
-							2,
-							data.bufferReadyCurrentNotification,
-						)
-						baAsn1.encodeClosingTag(buffer, 10)
-						break
-
-					case EventType.UNSIGNED_RANGE:
-						baAsn1.encodeOpeningTag(buffer, 11)
-						baAsn1.encodeContextUnsigned(
-							buffer,
-							0,
-							data.unsignedRangeExceedingValue,
-						)
-						baAsn1.encodeContextBitstring(
-							buffer,
-							1,
-							data.unsignedRangeStatusFlags,
-						)
-						baAsn1.encodeContextUnsigned(
-							buffer,
-							2,
-							data.unsignedRangeExceededLimit,
-						)
-						baAsn1.encodeClosingTag(buffer, 11)
-						break
-
-					case EventType.COMMAND_FAILURE:
-						baAsn1.encodeOpeningTag(buffer, 3)
-						EventNotifyData.encodeContextUnknownValue(
-							buffer,
-							0,
-							data.commandFailureCommandValue,
-							data.commandFailureCommandValueDecoded,
-						)
-						baAsn1.encodeContextBitstring(
-							buffer,
-							1,
-							data.commandFailureStatusFlags,
-						)
-						EventNotifyData.encodeContextUnknownValue(
-							buffer,
-							2,
-							data.commandFailureFeedbackValue,
-							data.commandFailureFeedbackValueDecoded,
-						)
-						baAsn1.encodeClosingTag(buffer, 3)
-						break
-
-					case EventType.ACCESS_EVENT:
-						baAsn1.encodeOpeningTag(buffer, 13)
-						baAsn1.encodeContextEnumerated(
-							buffer,
-							0,
-							data.accessEventAccessEvent,
-						)
-						baAsn1.encodeContextBitstring(
-							buffer,
-							1,
-							data.accessEventStatusFlags,
-						)
-						baAsn1.encodeContextUnsigned(
-							buffer,
-							2,
-							data.accessEventTag,
-						)
-						baAsn1.bacappEncodeContextTimestamp(
-							buffer,
-							3,
-							data.accessEventTime,
-						)
-						EventNotifyData.encodeContextDeviceObjectReference(
-							buffer,
-							4,
-							data.accessEventAccessCredential,
-						)
-						if (data.accessEventAuthenticationFactor) {
-							EventNotifyData.encodeContextAuthenticationFactor(
+					switch (data.changeOfValueTag) {
+						case CovType.REAL:
+							baAsn1.encodeContextReal(
 								buffer,
-								5,
-								data.accessEventAuthenticationFactor,
+								1,
+								data.changeOfValueChangeValue,
 							)
-						}
-						baAsn1.encodeClosingTag(buffer, 13)
-						break
-
-					case EventType.DOUBLE_OUT_OF_RANGE:
-						baAsn1.encodeOpeningTag(buffer, 14)
-						EventNotifyData.encodeContextDouble(
-							buffer,
-							0,
-							data.doubleOutOfRangeExceedingValue,
-						)
-						baAsn1.encodeContextBitstring(
-							buffer,
-							1,
-							data.doubleOutOfRangeStatusFlags,
-						)
-						EventNotifyData.encodeContextDouble(
-							buffer,
-							2,
-							data.doubleOutOfRangeDeadband,
-						)
-						EventNotifyData.encodeContextDouble(
-							buffer,
-							3,
-							data.doubleOutOfRangeExceededLimit,
-						)
-						baAsn1.encodeClosingTag(buffer, 14)
-						break
-
-					case EventType.SIGNED_OUT_OF_RANGE:
-						baAsn1.encodeOpeningTag(buffer, 15)
-						baAsn1.encodeContextSigned(
-							buffer,
-							0,
-							data.signedOutOfRangeExceedingValue,
-						)
-						baAsn1.encodeContextBitstring(
-							buffer,
-							1,
-							data.signedOutOfRangeStatusFlags,
-						)
-						baAsn1.encodeContextUnsigned(
-							buffer,
-							2,
-							data.signedOutOfRangeDeadband,
-						)
-						baAsn1.encodeContextSigned(
-							buffer,
-							3,
-							data.signedOutOfRangeExceededLimit,
-						)
-						baAsn1.encodeClosingTag(buffer, 15)
-						break
-
-					case EventType.UNSIGNED_OUT_OF_RANGE:
-						baAsn1.encodeOpeningTag(buffer, 16)
-						baAsn1.encodeContextUnsigned(
-							buffer,
-							0,
-							data.unsignedOutOfRangeExceedingValue,
-						)
-						baAsn1.encodeContextBitstring(
-							buffer,
-							1,
-							data.unsignedOutOfRangeStatusFlags,
-						)
-						baAsn1.encodeContextUnsigned(
-							buffer,
-							2,
-							data.unsignedOutOfRangeDeadband,
-						)
-						baAsn1.encodeContextUnsigned(
-							buffer,
-							3,
-							data.unsignedOutOfRangeExceededLimit,
-						)
-						baAsn1.encodeClosingTag(buffer, 16)
-						break
-
-					case EventType.CHANGE_OF_CHARACTERSTRING:
-						baAsn1.encodeOpeningTag(buffer, 17)
-						baAsn1.encodeContextCharacterString(
-							buffer,
-							0,
-							data.changeOfCharacterStringChangedValue,
-						)
-						baAsn1.encodeContextBitstring(
-							buffer,
-							1,
-							data.changeOfCharacterStringStatusFlags,
-						)
-						baAsn1.encodeContextCharacterString(
-							buffer,
-							2,
-							data.changeOfCharacterStringAlarmValue,
-						)
-						baAsn1.encodeClosingTag(buffer, 17)
-						break
-
-					case EventType.CHANGE_OF_STATUS_FLAGS:
-						baAsn1.encodeOpeningTag(buffer, 18)
-						if (
-							data.changeOfStatusFlagsPresentValue ||
-							data.changeOfStatusFlagsPresentValueDecoded
-						) {
-							EventNotifyData.encodeContextUnknownValue(
+							break
+						case CovType.BIT_STRING:
+							baAsn1.encodeContextBitstring(
 								buffer,
 								0,
-								data.changeOfStatusFlagsPresentValue,
-								data.changeOfStatusFlagsPresentValueDecoded,
+								data.changeOfValueChangedBits,
 							)
-						}
-						baAsn1.encodeContextBitstring(
-							buffer,
-							1,
-							data.changeOfStatusFlagsReferencedFlags,
-						)
-						baAsn1.encodeClosingTag(buffer, 18)
-						break
+							break
+						default:
+							throw new Error('NotImplemented')
+					}
 
-					case EventType.CHANGE_OF_RELIABILITY:
-						baAsn1.encodeOpeningTag(buffer, 19)
-						baAsn1.encodeContextEnumerated(
+					baAsn1.encodeClosingTag(buffer, 0)
+					baAsn1.encodeContextBitstring(
+						buffer,
+						1,
+						data.changeOfValueStatusFlags,
+					)
+					baAsn1.encodeClosingTag(buffer, 2)
+					break
+
+				case EventType.FLOATING_LIMIT:
+					baAsn1.encodeOpeningTag(buffer, 4)
+					baAsn1.encodeContextReal(
+						buffer,
+						0,
+						data.floatingLimitReferenceValue,
+					)
+					baAsn1.encodeContextBitstring(
+						buffer,
+						1,
+						data.floatingLimitStatusFlags,
+					)
+					baAsn1.encodeContextReal(
+						buffer,
+						2,
+						data.floatingLimitSetPointValue,
+					)
+					baAsn1.encodeContextReal(
+						buffer,
+						3,
+						data.floatingLimitErrorLimit,
+					)
+					baAsn1.encodeClosingTag(buffer, 4)
+					break
+
+				case EventType.OUT_OF_RANGE:
+					baAsn1.encodeOpeningTag(buffer, 5)
+					baAsn1.encodeContextReal(
+						buffer,
+						0,
+						data.outOfRangeExceedingValue,
+					)
+					baAsn1.encodeContextBitstring(
+						buffer,
+						1,
+						data.outOfRangeStatusFlags,
+					)
+					baAsn1.encodeContextReal(buffer, 2, data.outOfRangeDeadband)
+					baAsn1.encodeContextReal(
+						buffer,
+						3,
+						data.outOfRangeExceededLimit,
+					)
+					baAsn1.encodeClosingTag(buffer, 5)
+					break
+
+				case EventType.CHANGE_OF_LIFE_SAFETY:
+					baAsn1.encodeOpeningTag(buffer, 8)
+					baAsn1.encodeContextEnumerated(
+						buffer,
+						0,
+						data.changeOfLifeSafetyNewState,
+					)
+					baAsn1.encodeContextEnumerated(
+						buffer,
+						1,
+						data.changeOfLifeSafetyNewMode,
+					)
+					baAsn1.encodeContextBitstring(
+						buffer,
+						2,
+						data.changeOfLifeSafetyStatusFlags,
+					)
+					baAsn1.encodeContextEnumerated(
+						buffer,
+						3,
+						data.changeOfLifeSafetyOperationExpected,
+					)
+					baAsn1.encodeClosingTag(buffer, 8)
+					break
+
+				case EventType.BUFFER_READY:
+					baAsn1.encodeOpeningTag(buffer, 10)
+					baAsn1.bacappEncodeContextDeviceObjPropertyRef(
+						buffer,
+						0,
+						data.bufferReadyBufferProperty,
+					)
+					baAsn1.encodeContextUnsigned(
+						buffer,
+						1,
+						data.bufferReadyPreviousNotification,
+					)
+					baAsn1.encodeContextUnsigned(
+						buffer,
+						2,
+						data.bufferReadyCurrentNotification,
+					)
+					baAsn1.encodeClosingTag(buffer, 10)
+					break
+
+				case EventType.UNSIGNED_RANGE:
+					baAsn1.encodeOpeningTag(buffer, 11)
+					baAsn1.encodeContextUnsigned(
+						buffer,
+						0,
+						data.unsignedRangeExceedingValue,
+					)
+					baAsn1.encodeContextBitstring(
+						buffer,
+						1,
+						data.unsignedRangeStatusFlags,
+					)
+					baAsn1.encodeContextUnsigned(
+						buffer,
+						2,
+						data.unsignedRangeExceededLimit,
+					)
+					baAsn1.encodeClosingTag(buffer, 11)
+					break
+
+				case EventType.COMMAND_FAILURE:
+					baAsn1.encodeOpeningTag(buffer, 3)
+					EventNotifyData.encodeContextUnknownValue(
+						buffer,
+						0,
+						data.commandFailureCommandValue,
+						data.commandFailureCommandValueDecoded,
+					)
+					baAsn1.encodeContextBitstring(
+						buffer,
+						1,
+						data.commandFailureStatusFlags,
+					)
+					EventNotifyData.encodeContextUnknownValue(
+						buffer,
+						2,
+						data.commandFailureFeedbackValue,
+						data.commandFailureFeedbackValueDecoded,
+					)
+					baAsn1.encodeClosingTag(buffer, 3)
+					break
+
+				case EventType.ACCESS_EVENT:
+					baAsn1.encodeOpeningTag(buffer, 13)
+					baAsn1.encodeContextEnumerated(
+						buffer,
+						0,
+						data.accessEventAccessEvent,
+					)
+					baAsn1.encodeContextBitstring(
+						buffer,
+						1,
+						data.accessEventStatusFlags,
+					)
+					baAsn1.encodeContextUnsigned(buffer, 2, data.accessEventTag)
+					baAsn1.bacappEncodeContextTimestamp(
+						buffer,
+						3,
+						data.accessEventTime,
+					)
+					EventNotifyData.encodeContextDeviceObjectReference(
+						buffer,
+						4,
+						data.accessEventAccessCredential,
+					)
+					if (data.accessEventAuthenticationFactor) {
+						EventNotifyData.encodeContextAuthenticationFactor(
 							buffer,
-							0,
-							data.changeOfReliabilityReliability,
+							5,
+							data.accessEventAuthenticationFactor,
 						)
-						baAsn1.encodeContextBitstring(
-							buffer,
-							1,
-							data.changeOfReliabilityStatusFlags,
-						)
+					}
+					baAsn1.encodeClosingTag(buffer, 13)
+					break
+
+				case EventType.DOUBLE_OUT_OF_RANGE:
+					baAsn1.encodeOpeningTag(buffer, 14)
+					EventNotifyData.encodeContextDouble(
+						buffer,
+						0,
+						data.doubleOutOfRangeExceedingValue,
+					)
+					baAsn1.encodeContextBitstring(
+						buffer,
+						1,
+						data.doubleOutOfRangeStatusFlags,
+					)
+					EventNotifyData.encodeContextDouble(
+						buffer,
+						2,
+						data.doubleOutOfRangeDeadband,
+					)
+					EventNotifyData.encodeContextDouble(
+						buffer,
+						3,
+						data.doubleOutOfRangeExceededLimit,
+					)
+					baAsn1.encodeClosingTag(buffer, 14)
+					break
+
+				case EventType.SIGNED_OUT_OF_RANGE:
+					baAsn1.encodeOpeningTag(buffer, 15)
+					baAsn1.encodeContextSigned(
+						buffer,
+						0,
+						data.signedOutOfRangeExceedingValue,
+					)
+					baAsn1.encodeContextBitstring(
+						buffer,
+						1,
+						data.signedOutOfRangeStatusFlags,
+					)
+					baAsn1.encodeContextUnsigned(
+						buffer,
+						2,
+						data.signedOutOfRangeDeadband,
+					)
+					baAsn1.encodeContextSigned(
+						buffer,
+						3,
+						data.signedOutOfRangeExceededLimit,
+					)
+					baAsn1.encodeClosingTag(buffer, 15)
+					break
+
+				case EventType.UNSIGNED_OUT_OF_RANGE:
+					baAsn1.encodeOpeningTag(buffer, 16)
+					baAsn1.encodeContextUnsigned(
+						buffer,
+						0,
+						data.unsignedOutOfRangeExceedingValue,
+					)
+					baAsn1.encodeContextBitstring(
+						buffer,
+						1,
+						data.unsignedOutOfRangeStatusFlags,
+					)
+					baAsn1.encodeContextUnsigned(
+						buffer,
+						2,
+						data.unsignedOutOfRangeDeadband,
+					)
+					baAsn1.encodeContextUnsigned(
+						buffer,
+						3,
+						data.unsignedOutOfRangeExceededLimit,
+					)
+					baAsn1.encodeClosingTag(buffer, 16)
+					break
+
+				case EventType.CHANGE_OF_CHARACTERSTRING:
+					baAsn1.encodeOpeningTag(buffer, 17)
+					baAsn1.encodeContextCharacterString(
+						buffer,
+						0,
+						data.changeOfCharacterStringChangedValue,
+					)
+					baAsn1.encodeContextBitstring(
+						buffer,
+						1,
+						data.changeOfCharacterStringStatusFlags,
+					)
+					baAsn1.encodeContextCharacterString(
+						buffer,
+						2,
+						data.changeOfCharacterStringAlarmValue,
+					)
+					baAsn1.encodeClosingTag(buffer, 17)
+					break
+
+				case EventType.CHANGE_OF_STATUS_FLAGS:
+					baAsn1.encodeOpeningTag(buffer, 18)
+					if (
+						data.changeOfStatusFlagsPresentValue ||
+						data.changeOfStatusFlagsPresentValueDecoded
+					) {
 						EventNotifyData.encodeContextUnknownValue(
 							buffer,
-							2,
-							data.changeOfReliabilityPropertyValues,
-							data.changeOfReliabilityPropertyValuesDecoded,
+							0,
+							data.changeOfStatusFlagsPresentValue,
+							data.changeOfStatusFlagsPresentValueDecoded,
 						)
-						baAsn1.encodeClosingTag(buffer, 19)
-						break
+					}
+					baAsn1.encodeContextBitstring(
+						buffer,
+						1,
+						data.changeOfStatusFlagsReferencedFlags,
+					)
+					baAsn1.encodeClosingTag(buffer, 18)
+					break
 
-					case EventType.CHANGE_OF_DISCRETE_VALUE:
-						baAsn1.encodeOpeningTag(buffer, 21)
-						baAsn1.encodeOpeningTag(buffer, 0)
-						EventNotifyData.encodeDiscreteValueChoice(
-							buffer,
-							data.changeOfDiscreteValueNewValue,
-						)
-						baAsn1.encodeClosingTag(buffer, 0)
-						baAsn1.encodeContextBitstring(
-							buffer,
-							1,
-							data.changeOfDiscreteValueStatusFlags,
-						)
-						baAsn1.encodeClosingTag(buffer, 21)
-						break
+				case EventType.CHANGE_OF_RELIABILITY:
+					baAsn1.encodeOpeningTag(buffer, 19)
+					baAsn1.encodeContextEnumerated(
+						buffer,
+						0,
+						data.changeOfReliabilityReliability,
+					)
+					baAsn1.encodeContextBitstring(
+						buffer,
+						1,
+						data.changeOfReliabilityStatusFlags,
+					)
+					EventNotifyData.encodeContextUnknownValue(
+						buffer,
+						2,
+						data.changeOfReliabilityPropertyValues,
+						data.changeOfReliabilityPropertyValuesDecoded,
+					)
+					baAsn1.encodeClosingTag(buffer, 19)
+					break
 
-					case EventType.CHANGE_OF_TIMER:
-						baAsn1.encodeOpeningTag(buffer, 22)
+				case EventType.CHANGE_OF_DISCRETE_VALUE:
+					baAsn1.encodeOpeningTag(buffer, 21)
+					baAsn1.encodeOpeningTag(buffer, 0)
+					EventNotifyData.encodeDiscreteValueChoice(
+						buffer,
+						data.changeOfDiscreteValueNewValue,
+					)
+					baAsn1.encodeClosingTag(buffer, 0)
+					baAsn1.encodeContextBitstring(
+						buffer,
+						1,
+						data.changeOfDiscreteValueStatusFlags,
+					)
+					baAsn1.encodeClosingTag(buffer, 21)
+					break
+
+				case EventType.CHANGE_OF_TIMER:
+					baAsn1.encodeOpeningTag(buffer, 22)
+					baAsn1.encodeContextEnumerated(
+						buffer,
+						0,
+						data.changeOfTimerNewState,
+					)
+					baAsn1.encodeContextBitstring(
+						buffer,
+						1,
+						data.changeOfTimerStatusFlags,
+					)
+					EventNotifyData.encodeContextDateTime(
+						buffer,
+						2,
+						data.changeOfTimerUpdateTime,
+					)
+					if (data.changeOfTimerLastStateChange != null) {
 						baAsn1.encodeContextEnumerated(
 							buffer,
-							0,
-							data.changeOfTimerNewState,
+							3,
+							data.changeOfTimerLastStateChange,
 						)
-						baAsn1.encodeContextBitstring(
+					}
+					if (data.changeOfTimerInitialTimeout != null) {
+						baAsn1.encodeContextUnsigned(
 							buffer,
-							1,
-							data.changeOfTimerStatusFlags,
+							4,
+							data.changeOfTimerInitialTimeout,
 						)
+					}
+					if (data.changeOfTimerExpirationTime) {
 						EventNotifyData.encodeContextDateTime(
 							buffer,
-							2,
-							data.changeOfTimerUpdateTime,
+							5,
+							data.changeOfTimerExpirationTime,
 						)
-						if (data.changeOfTimerLastStateChange != null) {
-							baAsn1.encodeContextEnumerated(
-								buffer,
-								3,
-								data.changeOfTimerLastStateChange,
-							)
-						}
-						if (data.changeOfTimerInitialTimeout != null) {
-							baAsn1.encodeContextUnsigned(
-								buffer,
-								4,
-								data.changeOfTimerInitialTimeout,
-							)
-						}
-						if (data.changeOfTimerExpirationTime) {
-							EventNotifyData.encodeContextDateTime(
-								buffer,
-								5,
-								data.changeOfTimerExpirationTime,
-							)
-						}
-						baAsn1.encodeClosingTag(buffer, 22)
-						break
+					}
+					baAsn1.encodeClosingTag(buffer, 22)
+					break
 
-					case EventType.EXTENDED:
-						throw new Error(
-							'eventValuesRaw is required to encode EXTENDED event values',
-						)
+				case EventType.EXTENDED:
+					throw new Error(
+						'eventValuesRaw is required to encode EXTENDED event values',
+					)
 
-					default:
-						throw new Error('NotImplemented')
-				}
+				default:
+					throw new Error('NotImplemented')
+			}
 
-				baAsn1.encodeClosingTag(buffer, 12)
-				break
-
-			case NotifyType.ACK_NOTIFICATION:
-				break
-
-			default:
-				break
+			baAsn1.encodeClosingTag(buffer, 12)
 		}
 	}
 
@@ -2548,30 +2691,24 @@ export default class EventNotifyData extends BacnetService {
 		len += decodedValue.len
 		eventData.notifyType = decodedValue.value
 
-		switch (eventData.notifyType) {
-			case NotifyType.ALARM:
-			case NotifyType.EVENT:
-				decodedValue = EventNotifyData.decodeContextBoolean(
-					buffer,
-					offset + len,
-					9,
-				)
-				if (!decodedValue) return undefined
-				len += decodedValue.len
-				eventData.ackRequired = decodedValue.value
+		decodedValue = EventNotifyData.decodeContextBoolean(
+			buffer,
+			offset + len,
+			9,
+		)
+		if (decodedValue) {
+			len += decodedValue.len
+			eventData.ackRequired = decodedValue.value
+		}
 
-				decodedValue = EventNotifyData.decodeContextEnumerated(
-					buffer,
-					offset + len,
-					10,
-				)
-				if (!decodedValue) return undefined
-				len += decodedValue.len
-				eventData.fromState = decodedValue.value
-				break
-
-			default:
-				break
+		decodedValue = EventNotifyData.decodeContextEnumerated(
+			buffer,
+			offset + len,
+			10,
+		)
+		if (decodedValue) {
+			len += decodedValue.len
+			eventData.fromState = decodedValue.value
 		}
 
 		if (!baAsn1.decodeIsContextTag(buffer, offset + len, 11))
@@ -2586,10 +2723,7 @@ export default class EventNotifyData extends BacnetService {
 		len += decodedValue.len
 		eventData.toState = decodedValue.value
 
-		if (
-			eventData.notifyType === NotifyType.ALARM ||
-			eventData.notifyType === NotifyType.EVENT
-		) {
+		if (baAsn1.decodeIsOpeningTagNumber(buffer, offset + len, 12)) {
 			const eventValuesLen = EventNotifyData.decodeEventValues(
 				buffer,
 				offset + len,

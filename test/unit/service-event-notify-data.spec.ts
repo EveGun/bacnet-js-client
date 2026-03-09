@@ -877,6 +877,72 @@ test.describe('bacnet - Services layer EventNotifyData unit', () => {
 		assert.strictEqual(result.toState, 2)
 	})
 
+	test('should encode and decode notify-type event without optional ack/from-state and event-values', () => {
+		const buffer = utils.getBuffer()
+		const date = new Date()
+		date.setMilliseconds(880)
+		EventNotifyData.encode(buffer, {
+			processId: 16,
+			initiatingObjectId: { type: 8, instance: 1319071 },
+			eventObjectId: { type: 0, instance: 2 },
+			timeStamp: { type: TimeStamp.DATETIME, value: date },
+			notificationClass: 3,
+			priority: 5,
+			eventType: EventType.CHANGE_OF_STATE,
+			notifyType: NotifyType.EVENT,
+			toState: 1,
+		})
+
+		const result = EventNotifyData.decode(buffer.buffer, 0)
+		assert.ok(result)
+		assert.strictEqual(result.notifyType, NotifyType.EVENT)
+		assert.strictEqual(result.ackRequired, undefined)
+		assert.strictEqual(result.fromState, undefined)
+		assert.strictEqual(result.toState, 1)
+		assert.strictEqual(result.len, buffer.offset)
+	})
+
+	test('should encode and decode notify-type ack-notification with raw event-values', () => {
+		const rawEventValues = utils.getBuffer()
+		baAsn1.encodeOpeningTag(rawEventValues, 9)
+		baAsn1.encodeContextUnsigned(rawEventValues, 0, 1001)
+		baAsn1.encodeContextUnsigned(rawEventValues, 1, 2002)
+		baAsn1.encodeOpeningTag(rawEventValues, 2)
+		baAsn1.bacappEncodeApplicationData(rawEventValues, {
+			type: ApplicationTag.UNSIGNED_INTEGER,
+			value: 1,
+		})
+		baAsn1.encodeClosingTag(rawEventValues, 2)
+		baAsn1.encodeClosingTag(rawEventValues, 9)
+
+		const buffer = utils.getBuffer()
+		const date = new Date()
+		date.setMilliseconds(880)
+		EventNotifyData.encode(buffer, {
+			processId: 17,
+			initiatingObjectId: { type: 8, instance: 1319071 },
+			eventObjectId: { type: 0, instance: 3 },
+			timeStamp: { type: TimeStamp.DATETIME, value: date },
+			notificationClass: 3,
+			priority: 5,
+			eventType: EventType.EXTENDED,
+			notifyType: NotifyType.ACK_NOTIFICATION,
+			toState: 1,
+			eventValuesRaw: Buffer.from(
+				rawEventValues.buffer.subarray(0, rawEventValues.offset),
+			),
+		})
+
+		const result = EventNotifyData.decode(buffer.buffer, 0)
+		assert.ok(result)
+		assert.strictEqual(result.notifyType, NotifyType.ACK_NOTIFICATION)
+		assert.strictEqual(result.eventType, EventType.EXTENDED)
+		assert.strictEqual(result.ackRequired, undefined)
+		assert.strictEqual(result.fromState, undefined)
+		assert.strictEqual(result.toState, 1)
+		assert.strictEqual(result.len, buffer.offset)
+	})
+
 	test('should encode extended event values using raw payload', () => {
 		const rawEventValues = utils.getBuffer()
 		baAsn1.encodeOpeningTag(rawEventValues, 9)
