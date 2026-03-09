@@ -399,6 +399,15 @@ export default class WriteProperty extends BacnetService {
 			WriteProperty.encodeWeekNDayContext(buffer, date)
 			return
 		}
+		if (date.type === ApplicationTag.OBJECTIDENTIFIER) {
+			baAsn1.encodeContextObjectId(
+				buffer,
+				1,
+				date.value.type,
+				date.value.instance,
+			)
+			return
+		}
 		throw new Error(
 			'Could not encode: unsupported exception schedule date format',
 		)
@@ -417,31 +426,7 @@ export default class WriteProperty extends BacnetService {
 			)
 			return
 		}
-		const normalizedValues = (Array.isArray(values) ? values : [
-			values,
-		]) as unknown as BACNetExceptionSchedulePayload
-		const scheduleValues = normalizedValues
-		let entries: BACNetExceptionSchedulePayload
-		if (arrayIndex === ASN1_ARRAY_ALL) {
-			if (!Array.isArray(values)) {
-				throw new Error(
-					'Could not encode: exception schedule values must be an array',
-				)
-			}
-			entries = scheduleValues
-		} else {
-			const indexedEntry = scheduleValues[arrayIndex - 1]
-			if (indexedEntry != null) {
-				entries = [indexedEntry]
-			} else if (scheduleValues.length === 1 && scheduleValues[0] != null) {
-				entries = [scheduleValues[0]]
-			} else {
-				throw new Error(
-					'Could not encode: exception schedule entry is missing for the selected index',
-				)
-			}
-		}
-		for (const [index, entry] of entries.entries()) {
+		for (const [index, entry] of values.entries()) {
 			if (entry.date.type === ApplicationTag.OBJECTIDENTIFIER) {
 				// BACnetSpecialEvent period choice: calendar-reference [1] BACnetObjectIdentifier
 				WriteProperty.encodeExceptionDate(buffer, entry.date)
