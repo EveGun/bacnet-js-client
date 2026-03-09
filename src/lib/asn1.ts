@@ -1495,7 +1495,10 @@ export const decodeApplicationTime = (
 	return undefined
 }
 
-const decodeBacnetDatetime = (buffer: Buffer, offset: number): Decode<Date> => {
+export const decodeBacnetDatetime = (
+	buffer: Buffer,
+	offset: number,
+): Decode<Date> => {
 	let len = 0
 	const rawDate = decodeApplicationDate(buffer, offset + len)
 	if (!rawDate) return { len: 0, value: ZERO_DATE }
@@ -1512,7 +1515,7 @@ const decodeBacnetDatetime = (buffer: Buffer, offset: number): Decode<Date> => {
 		value: new Date(
 			date.getFullYear(),
 			date.getMonth(),
-			date.getDay(),
+			date.getDate(),
 			time.getHours(),
 			time.getMinutes(),
 			time.getSeconds(),

@@ -209,6 +209,25 @@ test.describe('bacnet - ASN1 layer', () => {
 		})
 	})
 
+	test.describe('decodeBacnetDatetime', () => {
+		test('should decode day-of-month, not day-of-week', () => {
+			// 2026-07-15 is a Wednesday: getDay() = 3, getDate() = 15.
+			const buffer = { buffer: Buffer.alloc(32), offset: 0 }
+			const datetime = new Date(2026, 6, 15, 10, 30, 45, 500)
+			baAsn1.encodeApplicationDate(buffer, datetime)
+			baAsn1.encodeApplicationTime(buffer, datetime)
+
+			const result = baAsn1.decodeBacnetDatetime(buffer.buffer, 0)
+			assert.equal(result.value.getDate(), 15)
+			assert.equal(result.value.getFullYear(), 2026)
+			assert.equal(result.value.getMonth(), 6)
+			assert.equal(result.value.getHours(), 10)
+			assert.equal(result.value.getMinutes(), 30)
+			assert.equal(result.value.getSeconds(), 45)
+			assert.equal(result.value.getMilliseconds(), 500)
+		})
+	})
+
 	test.describe('decodeWeekNDay', () => {
 		test('should decode valid WEEKNDAY payload', () => {
 			const buffer = { buffer: Buffer.alloc(8), offset: 0 }
