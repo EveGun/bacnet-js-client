@@ -519,7 +519,7 @@ export default class WriteProperty extends BacnetService {
 				)
 			}
 			const entry = Array.isArray(values)
-				? (values[arrayIndex - 1] ?? (values.length === 1 ? values[0] : undefined))
+				? values[arrayIndex - 1]
 				: values
 			if (entry == null) {
 				throw new Error(
