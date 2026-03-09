@@ -772,10 +772,11 @@ export interface EventNotificationPayload extends BasicServicePayload {
 	eventType: EventType
 	messageText?: string
 	notifyType: NotifyType
-	ackRequired: boolean
-	fromState: number
+	ackRequired?: boolean
+	fromState?: number
 	toState: number
-	eventValues: BACNetAppData[]
+	eventValues?: BACNetAppData[]
+	eventValuesRaw?: Buffer
 }
 
 export interface ReadRangePayload extends BasicServicePayload {
@@ -801,7 +802,7 @@ export interface EnrollmentSummary {
 	eventType: number
 	eventState: number
 	priority: number
-	notificationClass: number
+	notificationClass?: number
 }
 
 export interface EnrollmentOptions extends ServiceOptions {

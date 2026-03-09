@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert'
 
 import * as baAsn1 from '../../src/lib/asn1'
-import { ApplicationTag } from '../../src/lib/enum'
+import { ApplicationTag, CharacterStringEncoding } from '../../src/lib/enum'
 
 test.describe('bacnet - ASN1 layer', () => {
 	test.describe('decodeUnsigned', () => {
@@ -358,6 +358,50 @@ test.describe('bacnet - ASN1 layer', () => {
 					}),
 				/invalid timestamp/,
 			)
+		})
+	})
+
+	test.describe('character string encoding compatibility', () => {
+		test('should round-trip UCS-4 encoded application character string', () => {
+			const buffer = { buffer: Buffer.alloc(128), offset: 0 }
+			const value = 'A😀B'
+			baAsn1.encodeApplicationCharacterString(
+				buffer,
+				value,
+				CharacterStringEncoding.UCS_4,
+			)
+
+			const decoded = baAsn1.bacappDecodeApplicationData(
+				buffer.buffer,
+				0,
+				buffer.offset,
+				0,
+				0,
+			)
+			assert.ok(decoded)
+			assert.equal(decoded.type, ApplicationTag.CHARACTER_STRING)
+			assert.equal(decoded.value, value)
+		})
+
+		test('should decode UCS-4 with little-endian BOM', () => {
+			const decoded = baAsn1.decodeCharacterString(
+				Buffer.from([
+					CharacterStringEncoding.UCS_4,
+					0xff,
+					0xfe,
+					0x00,
+					0x00,
+					0x41,
+					0x00,
+					0x00,
+					0x00,
+				]),
+				0,
+				64,
+				9,
+			)
+			assert.equal(decoded.value, 'A')
+			assert.equal(decoded.encoding, CharacterStringEncoding.UCS_4)
 		})
 	})
 })

@@ -5,16 +5,14 @@ import { BacnetService } from './AbstractServices'
 export default class AlarmSummary extends BacnetService {
 	public static encode(buffer: EncodeBuffer, alarms: BACNetAlarm[]): void {
 		alarms.forEach((alarm) => {
-			baAsn1.encodeContextObjectId(
+			baAsn1.encodeApplicationObjectId(
 				buffer,
-				12,
 				alarm.objectId.type,
 				alarm.objectId.instance,
 			)
-			baAsn1.encodeContextEnumerated(buffer, 9, alarm.alarmState)
-			baAsn1.encodeContextBitstring(
+			baAsn1.encodeApplicationEnumerated(buffer, alarm.alarmState)
+			baAsn1.encodeApplicationBitstring(
 				buffer,
-				8,
 				alarm.acknowledgedTransitions,
 			)
 		})

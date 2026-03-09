@@ -154,7 +154,27 @@ export default class EventInformation extends BacnetService {
 			alarms.push(value)
 		}
 
-		const moreEvents = buffer[apduLen - 1] === 1
+		if (baAsn1.decodeIsClosingTagNumber(buffer, offset + len, 0)) {
+			len++
+		}
+
+		let moreEvents = false
+		if (baAsn1.decodeIsContextTag(buffer, offset + len, 1)) {
+			const moreEventsTag = baAsn1.decodeTagNumberAndValue(
+				buffer,
+				offset + len,
+			)
+			len += moreEventsTag.len
+			if (moreEventsTag.value > 0) {
+				const decoded = baAsn1.decodeUnsigned(
+					buffer,
+					offset + len,
+					moreEventsTag.value,
+				)
+				len += decoded.len
+				moreEvents = decoded.value > 0
+			}
+		}
 
 		return {
 			len,

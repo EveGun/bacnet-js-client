@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert'
 
 import * as utils from './utils'
+import * as baAsn1 from '../../src/lib/asn1'
 import { EventState, NotifyType, TimeStamp } from '../../src'
 import { GetEventInformation } from '../../src/lib/services'
 
@@ -101,5 +102,22 @@ test.describe('bacnet - Services layer GetEventInformation unit', () => {
 		assert.ok(result)
 		assert.strictEqual(result.moreEvents, false)
 		assert.strictEqual(result.events.length, 1)
+	})
+
+	test('should decode acknowledge payload with boolean false encoded as zero-length context tag', () => {
+		const buffer = utils.getBuffer()
+		baAsn1.encodeOpeningTag(buffer, 0)
+		baAsn1.encodeClosingTag(buffer, 0)
+		baAsn1.encodeTag(buffer, 1, true, 0)
+
+		const result = GetEventInformation.decodeAcknowledge(
+			buffer.buffer,
+			0,
+			buffer.offset,
+		)
+		assert.ok(result)
+		assert.strictEqual(result.moreEvents, false)
+		assert.strictEqual(result.events.length, 0)
+		assert.strictEqual(result.len, buffer.offset)
 	})
 })
