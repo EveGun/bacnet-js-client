@@ -252,6 +252,33 @@ export default class WriteProperty extends BacnetService {
 		buffer: EncodeBuffer,
 		values: BACNetWeeklySchedulePayload,
 	) {
+		if (arrayIndex === 0) {
+			WriteProperty.encodeArrayLengthPayload(
+				buffer,
+				'weekly schedule',
+				values,
+				7,
+			)
+			return
+		}
+		if (arrayIndex !== ASN1_ARRAY_ALL) {
+			if (!Number.isInteger(arrayIndex) || arrayIndex < 1 || arrayIndex > 7) {
+				throw new Error(
+					'Could not encode: weekly schedule index must be between 1 and 7',
+				)
+			}
+			if (!Array.isArray(values)) {
+				throw new Error(
+					'Could not encode: weekly schedule should be an array',
+				)
+			}
+			WriteProperty.encodeWeeklyScheduleDay(
+				buffer,
+				values as unknown as BACNetTimeValueEntry[],
+				`weekly schedule day ${arrayIndex - 1}`,
+			)
+			return
+		}
 		if (!Array.isArray(values)) {
 			throw new Error(
 				'Could not encode: weekly schedule should be an array',
@@ -322,10 +349,39 @@ export default class WriteProperty extends BacnetService {
 				'Could not encode: exception schedule values must be an array',
 			)
 		}
-		for (const [index, entry] of values.entries()) {
-			baAsn1.encodeOpeningTag(buffer, 0)
-			WriteProperty.encodeExceptionDate(buffer, entry.date)
-			baAsn1.encodeClosingTag(buffer, 0)
+		const normalizedValues = (Array.isArray(values) ? values : [
+			values,
+		]) as unknown as BACNetExceptionSchedulePayload
+		let entries: BACNetExceptionSchedulePayload
+		if (arrayIndex === ASN1_ARRAY_ALL) {
+			if (!Array.isArray(values)) {
+				throw new Error(
+					'Could not encode: exception schedule values must be an array',
+				)
+			}
+			entries = normalizedValues
+		} else {
+			const indexedEntry = normalizedValues[arrayIndex - 1]
+			if (indexedEntry != null) {
+				entries = [indexedEntry]
+			} else if (normalizedValues.length === 1 && normalizedValues[0] != null) {
+				entries = [normalizedValues[0]]
+			} else {
+				throw new Error(
+					'Could not encode: exception schedule entry is missing for the selected index',
+				)
+			}
+		}
+		for (const [index, entry] of entries.entries()) {
+			if (entry.date.type === ApplicationTag.OBJECTIDENTIFIER) {
+				// BACnetSpecialEvent period choice: calendar-reference [1] BACnetObjectIdentifier
+				WriteProperty.encodeExceptionDate(buffer, entry.date)
+			} else {
+				// BACnetSpecialEvent period choice: calendar-entry [0] BACnetCalendarEntry
+				baAsn1.encodeOpeningTag(buffer, 0)
+				WriteProperty.encodeExceptionDate(buffer, entry.date)
+				baAsn1.encodeClosingTag(buffer, 0)
+			}
 
 			const events = entry?.events
 			if (events != null && !Array.isArray(events)) {
@@ -370,6 +426,38 @@ export default class WriteProperty extends BacnetService {
 		buffer: EncodeBuffer,
 		values: BACNetEffectivePeriodPayload,
 	) {
+		if (arrayIndex === 0) {
+			WriteProperty.encodeArrayLengthPayload(
+				buffer,
+				'effective period',
+				values,
+				2,
+			)
+			return
+		}
+		if (arrayIndex !== ASN1_ARRAY_ALL) {
+			if (arrayIndex < 1 || arrayIndex > 2) {
+				throw new Error(
+					'Could not encode: effective period index must be 1 or 2',
+				)
+			}
+			const entry = Array.isArray(values)
+				? values[arrayIndex - 1] || values[0]
+				: values
+			if (
+				typeof entry === 'number' ||
+				(WriteProperty.hasTypeAndValue(entry) && entry.type === ApplicationTag.UNSIGNED_INTEGER)
+			) {
+				throw new Error(
+					'Could not encode: effective period entry must be a date',
+				)
+			}
+			WriteProperty.encodeDate(
+				buffer,
+				WriteProperty.extractDateInput(entry as any),
+			)
+			return
+		}
 		if (!Array.isArray(values)) {
 			throw new Error(
 				'Could not encode: effective period should be an array',
@@ -397,7 +485,30 @@ export default class WriteProperty extends BacnetService {
 				'Could not encode: calendar date list should be an array',
 			)
 		}
-		for (const entry of values) {
+		const normalizedValues = (Array.isArray(values) ? values : [
+			values,
+		]) as unknown as BACNetCalendarDateListPayload
+		let entries: BACNetCalendarDateListPayload
+		if (arrayIndex === ASN1_ARRAY_ALL) {
+			if (!Array.isArray(values)) {
+				throw new Error(
+					'Could not encode: calendar date list should be an array',
+				)
+			}
+			entries = normalizedValues
+		} else {
+			const indexedEntry = normalizedValues[arrayIndex - 1]
+			if (indexedEntry != null) {
+				entries = [indexedEntry]
+			} else if (normalizedValues.length === 1 && normalizedValues[0] != null) {
+				entries = [normalizedValues[0]]
+			} else {
+				throw new Error(
+					'Could not encode: calendar date list entry is missing for the selected index',
+				)
+			}
+		}
+		for (const entry of entries) {
 			if (entry?.type === ApplicationTag.DATE) {
 				WriteProperty.encodeDate(
 					buffer,

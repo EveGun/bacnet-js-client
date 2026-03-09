@@ -1,5 +1,8 @@
 import * as baAsn1 from '../asn1'
-import { ASN1_ARRAY_ALL, ASN1_NO_PRIORITY } from '../enum'
+import {
+	ASN1_ARRAY_ALL,
+	ASN1_NO_PRIORITY,
+} from '../enum'
 import {
 	EncodeBuffer,
 	BACNetObjectID,
@@ -95,21 +98,38 @@ export default class WritePropertyMultiple extends BacnetService {
 			)
 				return undefined
 			const values = []
-			while (
-				len + offset <= buffer.length &&
-				!baAsn1.decodeIsClosingTag(buffer, offset + len)
-			) {
-				const value = baAsn1.bacappDecodeApplicationData(
-					buffer,
-					offset + len,
-					apduLen + offset,
-					objectId.type,
-					propertyId,
-				)
-				if (!value) return undefined
-				len += value.len
-				delete value.len
-				values.push(value)
+			const schedDecoded = baAsn1.decodeScheduleCalendarValue(
+				buffer,
+				offset + len,
+				apduLen - len,
+				objectId.type,
+				propertyId,
+				arrayIndex,
+				2,
+				2,
+			)
+			if (schedDecoded !== null) {
+				if (!schedDecoded) return undefined
+				values.push({ type: schedDecoded.type, value: schedDecoded.value })
+				len += schedDecoded.len
+			} else {
+				while (
+					len + offset <= buffer.length &&
+					!baAsn1.decodeIsClosingTag(buffer, offset + len)
+				) {
+					const value = baAsn1.bacappDecodeApplicationData(
+						buffer,
+						offset + len,
+						apduLen + offset,
+						objectId.type,
+						propertyId,
+					)
+					if (!value) return undefined
+					len += value.len
+					delete value.len
+					values.push(value)
+				}
+				len++
 			}
 			len++
 			newEntry.value = values
