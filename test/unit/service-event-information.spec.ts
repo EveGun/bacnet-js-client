@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert'
 
 import * as utils from './utils'
+import * as baAsn1 from '../../src/lib/asn1'
 import { EventInformation } from '../../src/lib/services'
 import { EventState, NotifyType } from '../../src'
 
@@ -54,5 +55,18 @@ test.describe('bacnet - Services layer EventInformation unit', () => {
 			],
 			moreEvents: false,
 		})
+	})
+
+	test('should decode empty payload with zero-length boolean false', () => {
+		const buffer = utils.getBuffer()
+		baAsn1.encodeOpeningTag(buffer, 0)
+		baAsn1.encodeClosingTag(buffer, 0)
+		baAsn1.encodeTag(buffer, 1, true, 0)
+
+		const result = EventInformation.decode(buffer.buffer, 0, buffer.offset)
+		assert.ok(result)
+		assert.deepStrictEqual(result.alarms, [])
+		assert.strictEqual(result.moreEvents, false)
+		assert.strictEqual(result.len, buffer.offset)
 	})
 })

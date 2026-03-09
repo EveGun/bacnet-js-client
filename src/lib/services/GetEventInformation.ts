@@ -234,8 +234,17 @@ export default class GetEventInformation extends BacnetAckService {
 
 		result = baAsn1.decodeTagNumberAndValue(buffer, offset + len)
 		len += result.len
-		value.moreEvents = buffer[offset + len] > 0
-		len++
+		if (result.value === 0) {
+			value.moreEvents = false
+		} else {
+			const decoded = baAsn1.decodeUnsigned(
+				buffer,
+				offset + len,
+				result.value,
+			)
+			len += decoded.len
+			value.moreEvents = decoded.value > 0
+		}
 		value.len = len
 
 		return value

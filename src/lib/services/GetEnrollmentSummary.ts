@@ -35,16 +35,12 @@ export default class GetEnrollmentSummary extends BacnetAckService {
 			baAsn1.encodeClosingTag(buffer, 1)
 		}
 
-		if (eventStateFilter) {
-			baAsn1.encodeOpeningTag(buffer, 2)
-			baAsn1.encodeContextEnumerated(buffer, 0, eventStateFilter)
-			baAsn1.encodeClosingTag(buffer, 2)
+		if (eventStateFilter != null) {
+			baAsn1.encodeContextEnumerated(buffer, 2, eventStateFilter)
 		}
 
-		if (eventTypeFilter) {
-			baAsn1.encodeOpeningTag(buffer, 3)
-			baAsn1.encodeContextEnumerated(buffer, 0, eventTypeFilter)
-			baAsn1.encodeClosingTag(buffer, 3)
+		if (eventTypeFilter != null) {
+			baAsn1.encodeContextEnumerated(buffer, 3, eventTypeFilter)
 		}
 
 		if (priorityFilter) {
@@ -54,10 +50,8 @@ export default class GetEnrollmentSummary extends BacnetAckService {
 			baAsn1.encodeClosingTag(buffer, 4)
 		}
 
-		if (notificationClassFilter) {
-			baAsn1.encodeOpeningTag(buffer, 5)
-			baAsn1.encodeContextUnsigned(buffer, 0, notificationClassFilter)
-			baAsn1.encodeClosingTag(buffer, 5)
+		if (notificationClassFilter != null) {
+			baAsn1.encodeContextUnsigned(buffer, 5, notificationClassFilter)
 		}
 	}
 
@@ -105,31 +99,55 @@ export default class GetEnrollmentSummary extends BacnetAckService {
 		}
 
 		if (baAsn1.decodeIsContextTag(buffer, offset + len, 2)) {
-			len++
-			result = baAsn1.decodeTagNumberAndValue(buffer, offset + len)
-			len += result.len
-			decodedValue = baAsn1.decodeEnumerated(
-				buffer,
-				offset + len,
-				result.value,
-			)
-			len += decodedValue.len
-			value.eventStateFilter = decodedValue.value
-			len++
+			if (baAsn1.decodeIsOpeningTagNumber(buffer, offset + len, 2)) {
+				len++
+				result = baAsn1.decodeTagNumberAndValue(buffer, offset + len)
+				len += result.len
+				decodedValue = baAsn1.decodeEnumerated(
+					buffer,
+					offset + len,
+					result.value,
+				)
+				len += decodedValue.len
+				value.eventStateFilter = decodedValue.value
+				len++
+			} else {
+				result = baAsn1.decodeTagNumberAndValue(buffer, offset + len)
+				len += result.len
+				decodedValue = baAsn1.decodeEnumerated(
+					buffer,
+					offset + len,
+					result.value,
+				)
+				len += decodedValue.len
+				value.eventStateFilter = decodedValue.value
+			}
 		}
 
 		if (baAsn1.decodeIsContextTag(buffer, offset + len, 3)) {
-			len++
-			result = baAsn1.decodeTagNumberAndValue(buffer, offset + len)
-			len += result.len
-			decodedValue = baAsn1.decodeEnumerated(
-				buffer,
-				offset + len,
-				result.value,
-			)
-			len += decodedValue.len
-			value.eventTypeFilter = decodedValue.value
-			len++
+			if (baAsn1.decodeIsOpeningTagNumber(buffer, offset + len, 3)) {
+				len++
+				result = baAsn1.decodeTagNumberAndValue(buffer, offset + len)
+				len += result.len
+				decodedValue = baAsn1.decodeEnumerated(
+					buffer,
+					offset + len,
+					result.value,
+				)
+				len += decodedValue.len
+				value.eventTypeFilter = decodedValue.value
+				len++
+			} else {
+				result = baAsn1.decodeTagNumberAndValue(buffer, offset + len)
+				len += result.len
+				decodedValue = baAsn1.decodeEnumerated(
+					buffer,
+					offset + len,
+					result.value,
+				)
+				len += decodedValue.len
+				value.eventTypeFilter = decodedValue.value
+			}
 		}
 
 		if (baAsn1.decodeIsContextTag(buffer, offset + len, 4)) {
@@ -157,17 +175,29 @@ export default class GetEnrollmentSummary extends BacnetAckService {
 		}
 
 		if (baAsn1.decodeIsContextTag(buffer, offset + len, 5)) {
-			len++
-			result = baAsn1.decodeTagNumberAndValue(buffer, offset + len)
-			len += result.len
-			decodedValue = baAsn1.decodeUnsigned(
-				buffer,
-				offset + len,
-				result.value,
-			)
-			len += decodedValue.len
-			value.notificationClassFilter = decodedValue.value
-			len++
+			if (baAsn1.decodeIsOpeningTagNumber(buffer, offset + len, 5)) {
+				len++
+				result = baAsn1.decodeTagNumberAndValue(buffer, offset + len)
+				len += result.len
+				decodedValue = baAsn1.decodeUnsigned(
+					buffer,
+					offset + len,
+					result.value,
+				)
+				len += decodedValue.len
+				value.notificationClassFilter = decodedValue.value
+				len++
+			} else {
+				result = baAsn1.decodeTagNumberAndValue(buffer, offset + len)
+				len += result.len
+				decodedValue = baAsn1.decodeUnsigned(
+					buffer,
+					offset + len,
+					result.value,
+				)
+				len += decodedValue.len
+				value.notificationClassFilter = decodedValue.value
+			}
 		}
 
 		value.len = len
@@ -193,10 +223,12 @@ export default class GetEnrollmentSummary extends BacnetAckService {
 				enrollmentSummary.eventState,
 			)
 			baAsn1.encodeApplicationUnsigned(buffer, enrollmentSummary.priority)
-			baAsn1.encodeApplicationUnsigned(
-				buffer,
-				enrollmentSummary.notificationClass,
-			)
+			if (enrollmentSummary.notificationClass != null) {
+				baAsn1.encodeApplicationUnsigned(
+					buffer,
+					enrollmentSummary.notificationClass,
+				)
+			}
 		})
 	}
 
@@ -283,22 +315,25 @@ export default class GetEnrollmentSummary extends BacnetAckService {
 				enrollmentSummary.priority = decoded.value
 			}
 
-			{
+			if (len < apduLen) {
 				const result = baAsn1.decodeTagNumberAndValue(
 					buffer,
 					offset + len,
 				)
-				len += result.len
-				if (result.tagNumber !== ApplicationTag.UNSIGNED_INTEGER)
+				if (result.tagNumber === ApplicationTag.UNSIGNED_INTEGER) {
+					len += result.len
+					const decoded = baAsn1.decodeUnsigned(
+						buffer,
+						offset + len,
+						result.value,
+					)
+					len += decoded.len
+					enrollmentSummary.notificationClass = decoded.value
+				} else if (
+					result.tagNumber !== ApplicationTag.OBJECTIDENTIFIER
+				) {
 					return undefined
-
-				const decoded = baAsn1.decodeUnsigned(
-					buffer,
-					offset + len,
-					result.value,
-				)
-				len += decoded.len
-				enrollmentSummary.notificationClass = decoded.value
+				}
 			}
 
 			enrollmentSummaries.push(enrollmentSummary)

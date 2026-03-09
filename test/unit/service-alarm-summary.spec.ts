@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert'
 
 import * as utils from './utils'
+import * as baAsn1 from '../../src/lib/asn1'
 import { AlarmSummary } from '../../src/lib/services'
 
 test.describe('bacnet - Services layer AlarmSummary unit', () => {
@@ -35,5 +36,6 @@ test.describe('bacnet - Services layer AlarmSummary unit', () => {
 				},
 			],
 		})
+		assert.ok(!baAsn1.decodeIsContextTag(buffer.buffer, 0, 12))
 	})
 })
