@@ -89,6 +89,7 @@ import {
 	DecodeAtomicWriteFileResult,
 	DecodeAtomicReadFileResult,
 	ReadRangeAcknowledge,
+	ReadRangeOptions,
 	EnrollmentOptions,
 	EnrollmentSummaryAcknowledge,
 	EventNotifyDataParams,
@@ -1607,18 +1608,18 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		objectId: BACNetObjectID,
 		idxBegin: number,
 		quantity: number,
-		options: ServiceOptions = {},
+		options: ReadRangeOptions = {},
 	): Promise<ReadRangeAcknowledge> {
 		const settings = {
-			maxSegments:
-				(options as ServiceOptions).maxSegments ||
-				MaxSegmentsAccepted.SEGMENTS_65,
-			maxApdu:
-				(options as ServiceOptions).maxApdu ||
-				MaxApduLengthAccepted.OCTETS_1476,
-			invokeId:
-				(options as ServiceOptions).invokeId || this._getInvokeId(),
+			maxSegments: options.maxSegments || MaxSegmentsAccepted.SEGMENTS_65,
+			maxApdu: options.maxApdu || MaxApduLengthAccepted.OCTETS_1476,
+			invokeId: options.invokeId || this._getInvokeId(),
 		}
+		const propertyId = options.propertyId ?? PropertyIdentifier.LOG_BUFFER
+		const arrayIndex = options.arrayIndex ?? ASN1_ARRAY_ALL
+		const requestType = options.requestType ?? ReadRangeType.BY_POSITION
+		const time = options.time ?? new Date()
+
 		const buffer = this._getApduBuffer(receiver)
 		baNpdu.encode(
 			buffer,
@@ -1638,11 +1639,11 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		ReadRange.encode(
 			buffer,
 			objectId,
-			PropertyIdentifier.LOG_BUFFER,
-			ASN1_ARRAY_ALL,
-			ReadRangeType.BY_POSITION,
+			propertyId,
+			arrayIndex,
+			requestType,
 			idxBegin,
-			new Date(),
+			time,
 			quantity,
 		)
 		this.sendBvlc(receiver, buffer)
