@@ -497,7 +497,7 @@ export default class WriteProperty extends BacnetService {
 				)
 			}
 			const entry = Array.isArray(values)
-				? values[arrayIndex - 1] || values[0]
+				? values[arrayIndex - 1]
 				: values
 			if (
 				WriteProperty.hasTypeAndValue(entry) &&
