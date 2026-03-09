@@ -178,127 +178,20 @@ export default class ReadProperty extends BacnetService {
 		const values: ApplicationData[] = []
 		if (!baAsn1.decodeIsOpeningTagNumber(buffer, offset + len, 3)) return
 		len++
-		if (
-			objectId.type === ObjectType.SCHEDULE &&
-			property.id === PropertyIdentifier.WEEKLY_SCHEDULE &&
-			property.index === ASN1_ARRAY_ALL
-		) {
-			const result = baAsn1.decodeWeeklySchedule(
-				buffer,
-				offset + len,
-				apduLen - len,
-			)
-			if (!result) return undefined
-			values.push({
-				type: ApplicationTag.WEEKLY_SCHEDULE,
-				value: result.value,
-			} as ApplicationData)
-			len += result.len
-		} else if (
-			objectId.type === ObjectType.SCHEDULE &&
-			property.id === PropertyIdentifier.WEEKLY_SCHEDULE &&
-			property.index !== ASN1_ARRAY_ALL &&
-			property.index !== 0
-		) {
-			const result = baAsn1.decodeWeeklySchedule(
-				buffer,
-				offset + len,
-				apduLen - len,
-			)
-			if (!result || !result.value || !Array.isArray(result.value[0])) {
-				return undefined
-			}
-			values.push({
-				type: ApplicationTag.WEEKLY_SCHEDULE,
-				value: result.value[0],
-			} as ApplicationData)
-			len += result.len
-		} else if (
-			objectId.type === ObjectType.SCHEDULE &&
-			property.id === PropertyIdentifier.EXCEPTION_SCHEDULE &&
-			property.index === ASN1_ARRAY_ALL
-		) {
-			const result = baAsn1.decodeExceptionSchedule(
-				buffer,
-				offset + len,
-				apduLen - len,
-			)
-			if (!result) return undefined
-			values.push({
-				type: ApplicationTag.SPECIAL_EVENT,
-				value: result.value,
-			} as ApplicationData)
-			len += result.len
-		} else if (
-			objectId.type === ObjectType.SCHEDULE &&
-			property.id === PropertyIdentifier.EXCEPTION_SCHEDULE &&
-			property.index !== ASN1_ARRAY_ALL &&
-			property.index !== 0
-		) {
-			const result = baAsn1.decodeExceptionSchedule(
-				buffer,
-				offset + len,
-				apduLen - len,
-			)
-			if (!result || !Array.isArray(result.value) || result.value[0] == null) {
-				return undefined
-			}
-			values.push({
-				type: ApplicationTag.SPECIAL_EVENT,
-				value: result.value[0],
-			} as ApplicationData)
-			len += result.len
-		} else if (
-			objectId.type === ObjectType.SCHEDULE &&
-			property.id === PropertyIdentifier.EFFECTIVE_PERIOD &&
-			property.index === ASN1_ARRAY_ALL
-		) {
-			const result = baAsn1.decodeScheduleEffectivePeriod(
-				buffer,
-				offset + len,
-				apduLen - len,
-			)
-			if (!result) return undefined
-			values.push({
-				type: ApplicationTag.DATERANGE,
-				value: result.value,
-			} as ApplicationData)
-			len += result.len
-		} else if (
-			objectId.type === ObjectType.CALENDAR &&
-			property.id === PropertyIdentifier.DATE_LIST &&
-			property.index === ASN1_ARRAY_ALL
-		) {
-			const result = baAsn1.decodeCalendarDatelist(
-				buffer,
-				offset + len,
-				apduLen - len,
-			)
-			if (!result) return undefined
-			values.push({
-				type: ApplicationTag.CALENDAR_ENTRY,
-				value: result.value,
-			} as ApplicationData)
-			len += result.len
-		} else if (
-			objectId.type === ObjectType.CALENDAR &&
-			property.id === PropertyIdentifier.DATE_LIST &&
-			property.index !== ASN1_ARRAY_ALL &&
-			property.index !== 0
-		) {
-			const result = baAsn1.decodeCalendarDatelist(
-				buffer,
-				offset + len,
-				apduLen - len,
-			)
-			if (!result || !Array.isArray(result.value) || result.value[0] == null) {
-				return undefined
-			}
-			values.push({
-				type: ApplicationTag.CALENDAR_ENTRY,
-				value: result.value[0],
-			} as ApplicationData)
-			len += result.len
+		const schedDecoded = baAsn1.decodeScheduleCalendarValue(
+			buffer,
+			offset + len,
+			apduLen - len,
+			objectId.type,
+			property.id,
+			property.index ?? ASN1_ARRAY_ALL,
+			3,
+			3,
+		)
+		if (schedDecoded !== null) {
+			if (!schedDecoded) return undefined
+			values.push({ type: schedDecoded.type, value: schedDecoded.value } as ApplicationData)
+			len += schedDecoded.len
 		} else {
 			while (apduLen - len > 1) {
 				const result = baAsn1.bacappDecodeApplicationData(

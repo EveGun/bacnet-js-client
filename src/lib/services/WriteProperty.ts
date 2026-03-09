@@ -337,14 +337,9 @@ export default class WriteProperty extends BacnetService {
 					'Could not encode: weekly schedule should be an array',
 				)
 			}
-			const isFullWeek =
-				values.length === 7 && values.every((entry) => Array.isArray(entry))
-			const day = isFullWeek
-				? (values as BACNetWeeklySchedulePayload)[arrayIndex - 1]
-				: (values as unknown as BACNetTimeValueEntry[])
 			WriteProperty.encodeWeeklyScheduleDay(
 				buffer,
-				day,
+				values as unknown as BACNetTimeValueEntry[],
 				`weekly schedule day ${arrayIndex - 1}`,
 			)
 			return
@@ -429,7 +424,6 @@ export default class WriteProperty extends BacnetService {
 		const normalizedValues = (Array.isArray(values) ? values : [
 			values,
 		]) as unknown as BACNetExceptionSchedulePayload
-		const scheduleValues = normalizedValues
 		let entries: BACNetExceptionSchedulePayload
 		if (arrayIndex === ASN1_ARRAY_ALL) {
 			if (!Array.isArray(values)) {
@@ -437,13 +431,13 @@ export default class WriteProperty extends BacnetService {
 					'Could not encode: exception schedule values must be an array',
 				)
 			}
-			entries = scheduleValues
+			entries = normalizedValues
 		} else {
-			const indexedEntry = scheduleValues[arrayIndex - 1]
+			const indexedEntry = normalizedValues[arrayIndex - 1]
 			if (indexedEntry != null) {
 				entries = [indexedEntry]
-			} else if (scheduleValues.length === 1 && scheduleValues[0] != null) {
-				entries = [scheduleValues[0]]
+			} else if (normalizedValues.length === 1 && normalizedValues[0] != null) {
+				entries = [normalizedValues[0]]
 			} else {
 				throw new Error(
 					'Could not encode: exception schedule entry is missing for the selected index',
@@ -524,8 +518,8 @@ export default class WriteProperty extends BacnetService {
 				? values[arrayIndex - 1] || values[0]
 				: values
 			if (
-				WriteProperty.hasTypeAndValue(entry) &&
-				entry.type === ApplicationTag.UNSIGNED_INTEGER
+				typeof entry === 'number' ||
+				(WriteProperty.hasTypeAndValue(entry) && entry.type === ApplicationTag.UNSIGNED_INTEGER)
 			) {
 				throw new Error(
 					'Could not encode: effective period entry must be a date',
@@ -571,7 +565,6 @@ export default class WriteProperty extends BacnetService {
 		const normalizedValues = (Array.isArray(values) ? values : [
 			values,
 		]) as unknown as BACNetCalendarDateListPayload
-		const dateListValues = normalizedValues
 		let entries: BACNetCalendarDateListPayload
 		if (arrayIndex === ASN1_ARRAY_ALL) {
 			if (!Array.isArray(values)) {
@@ -579,13 +572,13 @@ export default class WriteProperty extends BacnetService {
 					'Could not encode: calendar date list should be an array',
 				)
 			}
-			entries = dateListValues
+			entries = normalizedValues
 		} else {
-			const indexedEntry = dateListValues[arrayIndex - 1]
+			const indexedEntry = normalizedValues[arrayIndex - 1]
 			if (indexedEntry != null) {
 				entries = [indexedEntry]
-			} else if (dateListValues.length === 1 && dateListValues[0] != null) {
-				entries = [dateListValues[0]]
+			} else if (normalizedValues.length === 1 && normalizedValues[0] != null) {
+				entries = [normalizedValues[0]]
 			} else {
 				throw new Error(
 					'Could not encode: calendar date list entry is missing for the selected index',
