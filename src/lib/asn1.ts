@@ -506,7 +506,7 @@ const encodeBacnetTime = (buffer: EncodeBuffer, value: Date): void => {
 	buffer.buffer[buffer.offset++] = value.getHours()
 	buffer.buffer[buffer.offset++] = value.getMinutes()
 	buffer.buffer[buffer.offset++] = value.getSeconds()
-	buffer.buffer[buffer.offset++] = value.getMilliseconds() / 10
+	buffer.buffer[buffer.offset++] = Math.round(value.getMilliseconds() / 10)
 }
 
 export const encodeApplicationTime = (
