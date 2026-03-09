@@ -253,7 +253,11 @@ export interface BACNetTimeValueEntry {
 export type BACNetWeeklySchedulePayload = BACNetTimeValueEntry[][]
 
 export interface BACNetSpecialEventEntry {
-	date: BACNetDateAppData | BACNetDateRangeAppData | BACNetWeekNDayAppData
+	date:
+		| BACNetDateAppData
+		| BACNetDateRangeAppData
+		| BACNetWeekNDayAppData
+		| BACNetAppData<ApplicationTag.OBJECTIDENTIFIER, BACNetObjectID>
 	events: BACNetTimeValueEntry[]
 	priority: BACNetAppData<ApplicationTag.UNSIGNED_INTEGER> | number
 }

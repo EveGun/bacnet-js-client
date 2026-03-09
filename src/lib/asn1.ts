@@ -2157,20 +2157,11 @@ export const decodeExceptionSchedule = (
 		len += decodeTagNumberAndValue(buffer, offset).len
 		return { len, value: [] }
 	}
-	if (!decodeIsOpeningTagNumber(buffer, offset, 0)) return undefined
-	len++
 	const result: any[] = []
 	while (
 		len < apduLen &&
 		!decodeIsClosingTagNumber(buffer, offset + len, 3)
 	) {
-		if (decodeIsOpeningTagNumber(buffer, offset + len, 0)) {
-			len += decodeTagNumberAndValue(buffer, offset + len).len
-		}
-		if (decodeIsClosingTagNumber(buffer, offset + len, 0)) {
-			len += decodeTagNumberAndValue(buffer, offset + len).len
-			continue
-		}
 		const decoded: {
 			date:
 				| ApplicationData
@@ -2186,110 +2177,129 @@ export const decodeExceptionSchedule = (
 			events: [],
 			priority: null,
 		}
-		let tag = decodeTagNumberAndValue(buffer, offset + len)
-		len += tag.len
-		if (
-			tag.tagNumber === 1 ||
-			decodeIsOpeningTagNumber(buffer, offset + len, 1)
-		) {
-			if (decodeIsOpeningTagNumber(buffer, offset + len, 1)) {
+		let tag: Tag
+		if (decodeIsOpeningTagNumber(buffer, offset + len, 0)) {
+			// BACnetSpecialEvent period choice: calendar-entry [0] BACnetCalendarEntry
+			len += decodeTagNumberAndValue(buffer, offset + len).len
+			const periodTagOffset = offset + len
+			tag = decodeTagNumberAndValue(buffer, periodTagOffset)
+			len += tag.len
+
+			if (decodeIsOpeningTagNumber(buffer, periodTagOffset, 1)) {
+				const dates: ApplicationData[] = []
+				while (!decodeIsClosingTagNumber(buffer, offset + len, 1)) {
+					tag = decodeTagNumberAndValue(buffer, offset + len)
+					len += tag.len
+					const value = bacappDecodeData(
+						buffer,
+						offset + len,
+						apduLen + offset,
+						tag.tagNumber,
+						tag.value,
+					)
+					if (!value) return undefined
+					len += value.len
+					dates.push(value as ApplicationData)
+				}
 				len += decodeTagNumberAndValue(buffer, offset + len).len
-			}
-			const dates: ApplicationData[] = []
-			while (!decodeIsClosingTagNumber(buffer, offset + len, 1)) {
-				tag = decodeTagNumberAndValue(buffer, offset + len)
-				len += tag.len
+				decoded.date = {
+					len: 8,
+					type: ApplicationTag.DATERANGE,
+					value: dates,
+				}
+			} else if (tag.tagNumber === 0 && tag.value === 4) {
 				const value = bacappDecodeData(
 					buffer,
 					offset + len,
 					apduLen + offset,
-					tag.tagNumber,
+					ApplicationTag.DATE,
 					tag.value,
 				)
 				if (!value) return undefined
+				decoded.date = value as ApplicationData
 				len += value.len
-				dates.push(value as ApplicationData)
+			} else if (tag.tagNumber === 2 && tag.value === 3) {
+				const value = bacappDecodeData(
+					buffer,
+					offset + len,
+					apduLen + offset,
+					ApplicationTag.WEEKNDAY,
+					tag.value,
+				)
+				if (!value) return undefined
+				decoded.date = value as ApplicationData
+				len += value.len
+			} else {
+				return undefined
+			}
+
+			if (!decodeIsClosingTagNumber(buffer, offset + len, 0))
+				return undefined
+			len += decodeTagNumberAndValue(buffer, offset + len).len
+		} else {
+			// BACnetSpecialEvent period choice: calendar-reference [1] BACnetObjectIdentifier
+			tag = decodeTagNumberAndValue(buffer, offset + len)
+			if (
+				tag.tagNumber !== 1 ||
+				decodeIsOpeningTagNumber(buffer, offset + len, 1)
+			) {
+				return undefined
+			}
+			len += tag.len
+			const objectId = decodeObjectId(buffer, offset + len)
+			len += objectId.len
+			decoded.date = {
+				type: ApplicationTag.OBJECTIDENTIFIER,
+				value: {
+					type: objectId.objectType,
+					instance: objectId.instance,
+				},
+			}
+		}
+
+		if (!decodeIsOpeningTagNumber(buffer, offset + len, 2)) return undefined
+		len += decodeTagNumberAndValue(buffer, offset + len).len
+
+		while (
+			len < apduLen &&
+			!decodeIsClosingTagNumber(buffer, offset + len, 2)
+		) {
+			const event: {
+				time: ApplicationData | null
+				value: ApplicationData | null
+			} = {
+				time: null,
+				value: null,
 			}
 			tag = decodeTagNumberAndValue(buffer, offset + len)
 			len += tag.len
-			decoded.date = {
-				len: 8,
-				type: ApplicationTag.DATERANGE,
-				value: dates,
-			}
-		} else if (tag.tagNumber === 0 && tag.value === 4) {
-			const value = bacappDecodeData(
+			let value = bacappDecodeData(
 				buffer,
 				offset + len,
 				apduLen + offset,
-				ApplicationTag.DATE,
+				tag.tagNumber,
 				tag.value,
 			)
 			if (!value) return undefined
-			decoded.date = value as ApplicationData
 			len += value.len
-		} else if (tag.tagNumber === 2 && tag.value === 3) {
-			const value = bacappDecodeData(
+			event.time = value as ApplicationData
+
+			tag = decodeTagNumberAndValue(buffer, offset + len)
+			len += tag.len
+			value = bacappDecodeData(
 				buffer,
 				offset + len,
 				apduLen + offset,
-				ApplicationTag.WEEKNDAY,
+				tag.tagNumber,
 				tag.value,
 			)
 			if (!value) return undefined
-			decoded.date = value as ApplicationData
+			event.value = value as ApplicationData
 			len += value.len
+			decoded.events.push(event)
 		}
-
-		if (
-			decodeIsClosingTagNumber(buffer, offset + len, 0) &&
-			decodeIsOpeningTagNumber(buffer, offset + len + 1, 2)
-		) {
-			len += decodeTagNumberAndValue(buffer, offset + len).len
-			len += decodeTagNumberAndValue(buffer, offset + len).len
-			while (
-				len < apduLen &&
-				!decodeIsClosingTagNumber(buffer, offset + len, 2)
-			) {
-				const event: {
-					time: ApplicationData | null
-					value: ApplicationData | null
-				} = {
-					time: null,
-					value: null,
-				}
-				tag = decodeTagNumberAndValue(buffer, offset + len)
-				len += tag.len
-				let value = bacappDecodeData(
-					buffer,
-					offset + len,
-					apduLen + offset,
-					tag.tagNumber,
-					tag.value,
-				)
-				if (!value) return undefined
-				len += value.len
-				event.time = value as ApplicationData
-
-				tag = decodeTagNumberAndValue(buffer, offset + len)
-				len += tag.len
-				value = bacappDecodeData(
-					buffer,
-					offset + len,
-					apduLen + offset,
-					tag.tagNumber,
-					tag.value,
-				)
-				if (!value) return undefined
-				event.value = value as ApplicationData
-				len += value.len
-				decoded.events.push(event)
-				if (decodeIsClosingTagNumber(buffer, offset + len, 2)) {
-					len += decodeTagNumberAndValue(buffer, offset + len).len
-					break
-				}
-			}
-		}
+		if (!decodeIsClosingTagNumber(buffer, offset + len, 2)) return undefined
+		len += decodeTagNumberAndValue(buffer, offset + len).len
 
 		tag = decodeTagNumberAndValue(buffer, offset + len)
 		if (decodeIsClosingTagNumber(buffer, offset + len, 3)) {

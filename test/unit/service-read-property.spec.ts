@@ -162,10 +162,31 @@ test.describe('ReadPropertyAcknowledge schedule/calendar compatibility', () => {
 			value: 1,
 		})
 		baAsn1.encodeClosingTag(buffer, 2)
-		baAsn1.bacappEncodeApplicationData(buffer, {
-			type: ApplicationTag.UNSIGNED_INTEGER,
-			value: 5,
-		})
+			baAsn1.bacappEncodeApplicationData(buffer, {
+				type: ApplicationTag.UNSIGNED_INTEGER,
+				value: 5,
+			})
+
+			baAsn1.encodeContextObjectId(
+				buffer,
+				1,
+				ObjectType.CALENDAR,
+				9,
+			)
+			baAsn1.encodeOpeningTag(buffer, 2)
+			baAsn1.bacappEncodeApplicationData(buffer, {
+				type: ApplicationTag.TIME,
+				value: new Date(2024, 0, 2, 15, 45, 0, 0),
+			})
+			baAsn1.bacappEncodeApplicationData(buffer, {
+				type: ApplicationTag.ENUMERATED,
+				value: 3,
+			})
+			baAsn1.encodeClosingTag(buffer, 2)
+			baAsn1.bacappEncodeApplicationData(buffer, {
+				type: ApplicationTag.UNSIGNED_INTEGER,
+				value: 4,
+			})
 
 		baAsn1.encodeClosingTag(buffer, 3)
 
@@ -190,10 +211,18 @@ test.describe('ReadPropertyAcknowledge schedule/calendar compatibility', () => {
 		const weekdayEntry = values.find(
 			(entry) => entry?.date?.type === ApplicationTag.WEEKNDAY,
 		)
-		assert.equal(weekdayEntry.date.value.month, 0xff)
-		assert.equal(weekdayEntry.date.value.week, 2)
-		assert.equal(weekdayEntry.date.value.wday, 1)
-	})
+			assert.equal(weekdayEntry.date.value.month, 0xff)
+			assert.equal(weekdayEntry.date.value.week, 2)
+			assert.equal(weekdayEntry.date.value.wday, 1)
+			const calendarReferenceEntry = values.find(
+				(entry) =>
+					entry?.date?.type === ApplicationTag.OBJECTIDENTIFIER,
+			)
+			assert.deepStrictEqual(calendarReferenceEntry?.date?.value, {
+				type: ObjectType.CALENDAR,
+				instance: 9,
+			})
+		})
 
 	test('should preserve raw date for partial wildcard single date in exception schedule', () => {
 		const buffer = utils.getBuffer()
@@ -511,5 +540,32 @@ test.describe('ReadPropertyAcknowledge', () => {
 				{ type: 2, value: 1000000000 },
 			],
 		})
+	})
+
+	test('should decode timer state change values payload', () => {
+		const buffer = utils.getBuffer()
+		ReadProperty.encodeAcknowledge(
+			buffer,
+			{ type: ObjectType.TIMER, instance: 7 },
+			PropertyIdentifier.STATE_CHANGE_VALUES,
+			0xffffffff,
+			[
+				{ type: ApplicationTag.NULL, value: null },
+				{ type: ApplicationTag.BOOLEAN, value: true },
+				{ type: ApplicationTag.UNSIGNED_INTEGER, value: 12 },
+				{ type: ApplicationTag.ENUMERATED, value: 3 },
+			],
+		)
+		const result = ReadProperty.decodeAcknowledge(
+			buffer.buffer,
+			0,
+			buffer.offset,
+		)
+		assert.ok(result)
+		assert.equal(result.objectId.type, ObjectType.TIMER)
+		assert.equal(result.property.id, PropertyIdentifier.STATE_CHANGE_VALUES)
+		assert.equal(result.values.length, 4)
+		assert.equal(result.values[1].type, ApplicationTag.BOOLEAN)
+		assert.equal(result.values[1].value, true)
 	})
 })

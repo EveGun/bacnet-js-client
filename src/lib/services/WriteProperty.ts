@@ -308,6 +308,15 @@ export default class WriteProperty extends BacnetService {
 			WriteProperty.encodeWeekNDayContext(buffer, date)
 			return
 		}
+		if (date.type === ApplicationTag.OBJECTIDENTIFIER) {
+			baAsn1.encodeContextObjectId(
+				buffer,
+				1,
+				date.value.type,
+				date.value.instance,
+			)
+			return
+		}
 		throw new Error(
 			'Could not encode: unsupported exception schedule date format',
 		)
@@ -323,9 +332,15 @@ export default class WriteProperty extends BacnetService {
 			)
 		}
 		for (const [index, entry] of values.entries()) {
-			baAsn1.encodeOpeningTag(buffer, 0)
-			WriteProperty.encodeExceptionDate(buffer, entry.date)
-			baAsn1.encodeClosingTag(buffer, 0)
+			if (entry.date.type === ApplicationTag.OBJECTIDENTIFIER) {
+				// BACnetSpecialEvent period choice: calendar-reference [1] BACnetObjectIdentifier
+				WriteProperty.encodeExceptionDate(buffer, entry.date)
+			} else {
+				// BACnetSpecialEvent period choice: calendar-entry [0] BACnetCalendarEntry
+				baAsn1.encodeOpeningTag(buffer, 0)
+				WriteProperty.encodeExceptionDate(buffer, entry.date)
+				baAsn1.encodeClosingTag(buffer, 0)
+			}
 
 			const events = entry?.events
 			if (events != null && !Array.isArray(events)) {
