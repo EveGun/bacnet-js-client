@@ -433,16 +433,15 @@ export default class WriteProperty extends BacnetService {
 			}
 			entries = normalizedValues
 		} else {
-			const indexedEntry = normalizedValues[arrayIndex - 1]
-			if (indexedEntry != null) {
-				entries = [indexedEntry]
-			} else if (normalizedValues.length === 1 && normalizedValues[0] != null) {
-				entries = [normalizedValues[0]]
-			} else {
+			const indexedEntry = normalizedValues.length === 1
+				? normalizedValues[0]
+				: normalizedValues[arrayIndex - 1]
+			if (indexedEntry == null) {
 				throw new Error(
 					'Could not encode: exception schedule entry is missing for the selected index',
 				)
 			}
+			entries = [indexedEntry]
 		}
 		for (const [index, entry] of entries.entries()) {
 			if (entry.date.type === ApplicationTag.OBJECTIDENTIFIER) {
@@ -459,6 +458,11 @@ export default class WriteProperty extends BacnetService {
 			if (events != null && !Array.isArray(events)) {
 				throw new Error(
 					`Could not encode: exception schedule entry ${index} events must be an array`,
+				)
+			}
+			if (!events || events.length === 0) {
+				throw new Error(
+					`Could not encode: exception schedule entry ${index} must have at least one event`,
 				)
 			}
 			baAsn1.encodeOpeningTag(buffer, 2)
@@ -515,8 +519,13 @@ export default class WriteProperty extends BacnetService {
 				)
 			}
 			const entry = Array.isArray(values)
-				? values[arrayIndex - 1] || values[0]
+				? (values[arrayIndex - 1] ?? (values.length === 1 ? values[0] : undefined))
 				: values
+			if (entry == null) {
+				throw new Error(
+					'Could not encode: effective period entry is missing for the selected index',
+				)
+			}
 			if (
 				typeof entry === 'number' ||
 				(WriteProperty.hasTypeAndValue(entry) && entry.type === ApplicationTag.UNSIGNED_INTEGER)
@@ -574,16 +583,15 @@ export default class WriteProperty extends BacnetService {
 			}
 			entries = normalizedValues
 		} else {
-			const indexedEntry = normalizedValues[arrayIndex - 1]
-			if (indexedEntry != null) {
-				entries = [indexedEntry]
-			} else if (normalizedValues.length === 1 && normalizedValues[0] != null) {
-				entries = [normalizedValues[0]]
-			} else {
+			const indexedEntry = normalizedValues.length === 1
+				? normalizedValues[0]
+				: normalizedValues[arrayIndex - 1]
+			if (indexedEntry == null) {
 				throw new Error(
 					'Could not encode: calendar date list entry is missing for the selected index',
 				)
 			}
+			entries = [indexedEntry]
 		}
 		for (const entry of entries) {
 			if (entry?.type === ApplicationTag.DATE) {

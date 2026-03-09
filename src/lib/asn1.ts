@@ -1526,7 +1526,7 @@ const decodeBacnetDatetime = (buffer: Buffer, offset: number): Decode<Date> => {
 		value: new Date(
 			date.getFullYear(),
 			date.getMonth(),
-			date.getDay(),
+			date.getDate(),
 			time.getHours(),
 			time.getMinutes(),
 			time.getSeconds(),

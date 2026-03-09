@@ -837,7 +837,7 @@ test.describe('WriteProperty schedule/calendar compatibility', () => {
 		}, /must have exactly 2 dates/)
 	})
 
-	test('should reject exception schedule payload with missing priority', () => {
+	test('should reject exception schedule payload with empty events array', () => {
 		const buffer = utils.getBuffer()
 		const payload = [
 			{
@@ -846,6 +846,37 @@ test.describe('WriteProperty schedule/calendar compatibility', () => {
 					value: new Date(2024, 11, 4),
 				},
 				events: [],
+				priority: { type: ApplicationTag.UNSIGNED_INTEGER, value: 8 },
+			},
+		]
+
+		assert.throws(() => {
+			WriteProperty.encode(
+				buffer,
+				ObjectType.SCHEDULE,
+				0,
+				PropertyIdentifier.EXCEPTION_SCHEDULE,
+				0xffffffff,
+				0,
+				payload as any,
+			)
+		}, /must have at least one event/)
+	})
+
+	test('should reject exception schedule payload with missing priority', () => {
+		const buffer = utils.getBuffer()
+		const payload = [
+			{
+				date: {
+					type: ApplicationTag.DATE,
+					value: new Date(2024, 11, 4),
+				},
+				events: [
+					{
+						time: { type: ApplicationTag.TIME, value: new Date(2024, 0, 1, 8, 0) },
+						value: { type: ApplicationTag.REAL, value: 21.5 },
+					},
+				],
 			},
 		]
 
@@ -870,7 +901,12 @@ test.describe('WriteProperty schedule/calendar compatibility', () => {
 					type: ApplicationTag.DATE,
 					value: new Date(2024, 11, 4),
 				},
-				events: [],
+				events: [
+					{
+						time: { type: ApplicationTag.TIME, value: new Date(2024, 0, 1, 8, 0) },
+						value: { type: ApplicationTag.REAL, value: 21.5 },
+					},
+				],
 				priority: { type: ApplicationTag.UNSIGNED_INTEGER, value: 0 },
 			},
 		]
