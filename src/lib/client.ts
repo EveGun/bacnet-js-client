@@ -1214,7 +1214,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 				(options as WritePropertyOptions).invokeId ||
 				this._getInvokeId(),
 			arrayIndex:
-				(options as WritePropertyOptions).arrayIndex || ASN1_ARRAY_ALL,
+				(options as WritePropertyOptions).arrayIndex ?? ASN1_ARRAY_ALL,
 			priority:
 				(options as WritePropertyOptions).priority || ASN1_NO_PRIORITY,
 		}

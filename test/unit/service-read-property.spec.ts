@@ -33,10 +33,11 @@ const encodeReadPropertyAckHeader = (
 	objectType: number,
 	objectInstance: number,
 	propertyId: number,
+	arrayIndex: number = ASN1_ARRAY_ALL,
 ) => {
 	baAsn1.encodeContextObjectId(buffer, 0, objectType, objectInstance)
 	baAsn1.encodeContextEnumerated(buffer, 1, propertyId)
-	baAsn1.encodeContextUnsigned(buffer, 2, ASN1_ARRAY_ALL)
+	baAsn1.encodeContextUnsigned(buffer, 2, arrayIndex)
 	baAsn1.encodeOpeningTag(buffer, 3)
 }
 
@@ -76,6 +77,32 @@ test.describe('bacnet - Services layer ReadProperty unit', () => {
 })
 
 test.describe('ReadPropertyAcknowledge schedule/calendar compatibility', () => {
+	test('should decode weekly schedule array size when array index is 0', () => {
+		const buffer = utils.getBuffer()
+		encodeReadPropertyAckHeader(
+			buffer,
+			ObjectType.SCHEDULE,
+			17,
+			PropertyIdentifier.WEEKLY_SCHEDULE,
+			0,
+		)
+		baAsn1.bacappEncodeApplicationData(buffer, {
+			type: ApplicationTag.UNSIGNED_INTEGER,
+			value: 7,
+		})
+		baAsn1.encodeClosingTag(buffer, 3)
+
+		const result = ReadProperty.decodeAcknowledge(
+			buffer.buffer,
+			0,
+			buffer.offset,
+		)
+		assert.ok(result)
+		assert.equal(result.property.index, 0)
+		assert.equal(result.values[0].type, ApplicationTag.UNSIGNED_INTEGER)
+		assert.equal(result.values[0].value, 7)
+	})
+
 	test('should decode weekly schedule payload', () => {
 		const buffer = utils.getBuffer()
 		encodeReadPropertyAckHeader(
@@ -116,6 +143,40 @@ test.describe('ReadPropertyAcknowledge schedule/calendar compatibility', () => {
 		assert.equal(values.length, 7)
 		assert.equal(values[0][0].value.value, 21.5)
 		assert.ok(values[0][0].time.value instanceof Date)
+	})
+
+	test('should decode single weekly schedule day when array index is set', () => {
+		const buffer = utils.getBuffer()
+		encodeReadPropertyAckHeader(
+			buffer,
+			ObjectType.SCHEDULE,
+			17,
+			PropertyIdentifier.WEEKLY_SCHEDULE,
+			1,
+		)
+		baAsn1.encodeOpeningTag(buffer, 0)
+		baAsn1.bacappEncodeApplicationData(buffer, {
+			type: ApplicationTag.TIME,
+			value: new Date(2024, 0, 1, 8, 0, 0, 0),
+		})
+		baAsn1.bacappEncodeApplicationData(buffer, {
+			type: ApplicationTag.REAL,
+			value: 22.5,
+		})
+		baAsn1.encodeClosingTag(buffer, 0)
+		baAsn1.encodeClosingTag(buffer, 3)
+
+		const result = ReadProperty.decodeAcknowledge(
+			buffer.buffer,
+			0,
+			buffer.offset,
+		)
+		assert.ok(result)
+		assert.equal(result.property.index, 1)
+		assert.equal(result.values[0].type, ApplicationTag.WEEKLY_SCHEDULE)
+		const day = result.values[0].value as any[]
+		assert.equal(day.length, 1)
+		assert.equal(day[0].value?.value, 22.5)
 	})
 
 	test('should decode exception schedule payload with date and weekday', () => {
@@ -464,6 +525,32 @@ test.describe('ReadPropertyAcknowledge schedule/calendar compatibility', () => {
 		assert.ok(
 			values.some((entry) => entry?.type === ApplicationTag.DATERANGE),
 		)
+	})
+
+	test('should decode single calendar entry when array index is set', () => {
+		const buffer = utils.getBuffer()
+		encodeReadPropertyAckHeader(
+			buffer,
+			ObjectType.CALENDAR,
+			6,
+			PropertyIdentifier.DATE_LIST,
+			1,
+		)
+		baAsn1.encodeTag(buffer, 0, true, 4)
+		encodeRawDate(buffer, new Date(2024, 1, 2))
+		baAsn1.encodeClosingTag(buffer, 3)
+
+		const result = ReadProperty.decodeAcknowledge(
+			buffer.buffer,
+			0,
+			buffer.offset,
+		)
+		assert.ok(result)
+		assert.equal(result.property.index, 1)
+		assert.equal(result.values[0].type, ApplicationTag.CALENDAR_ENTRY)
+		const entry = result.values[0].value as any
+		assert.equal(entry.type, ApplicationTag.DATE)
+		assert.ok(entry.value instanceof Date)
 	})
 })
 

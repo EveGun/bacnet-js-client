@@ -180,7 +180,8 @@ export default class ReadProperty extends BacnetService {
 		len++
 		if (
 			objectId.type === ObjectType.SCHEDULE &&
-			property.id === PropertyIdentifier.WEEKLY_SCHEDULE
+			property.id === PropertyIdentifier.WEEKLY_SCHEDULE &&
+			property.index === ASN1_ARRAY_ALL
 		) {
 			const result = baAsn1.decodeWeeklySchedule(
 				buffer,
@@ -195,7 +196,27 @@ export default class ReadProperty extends BacnetService {
 			len += result.len
 		} else if (
 			objectId.type === ObjectType.SCHEDULE &&
-			property.id === PropertyIdentifier.EXCEPTION_SCHEDULE
+			property.id === PropertyIdentifier.WEEKLY_SCHEDULE &&
+			property.index !== ASN1_ARRAY_ALL &&
+			property.index !== 0
+		) {
+			const result = baAsn1.decodeWeeklySchedule(
+				buffer,
+				offset + len,
+				apduLen - len,
+			)
+			if (!result || !result.value || !Array.isArray(result.value[0])) {
+				return undefined
+			}
+			values.push({
+				type: ApplicationTag.WEEKLY_SCHEDULE,
+				value: result.value[0],
+			} as ApplicationData)
+			len += result.len
+		} else if (
+			objectId.type === ObjectType.SCHEDULE &&
+			property.id === PropertyIdentifier.EXCEPTION_SCHEDULE &&
+			property.index === ASN1_ARRAY_ALL
 		) {
 			const result = baAsn1.decodeExceptionSchedule(
 				buffer,
@@ -210,7 +231,27 @@ export default class ReadProperty extends BacnetService {
 			len += result.len
 		} else if (
 			objectId.type === ObjectType.SCHEDULE &&
-			property.id === PropertyIdentifier.EFFECTIVE_PERIOD
+			property.id === PropertyIdentifier.EXCEPTION_SCHEDULE &&
+			property.index !== ASN1_ARRAY_ALL &&
+			property.index !== 0
+		) {
+			const result = baAsn1.decodeExceptionSchedule(
+				buffer,
+				offset + len,
+				apduLen - len,
+			)
+			if (!result || !Array.isArray(result.value) || result.value[0] == null) {
+				return undefined
+			}
+			values.push({
+				type: ApplicationTag.SPECIAL_EVENT,
+				value: result.value[0],
+			} as ApplicationData)
+			len += result.len
+		} else if (
+			objectId.type === ObjectType.SCHEDULE &&
+			property.id === PropertyIdentifier.EFFECTIVE_PERIOD &&
+			property.index === ASN1_ARRAY_ALL
 		) {
 			const result = baAsn1.decodeScheduleEffectivePeriod(
 				buffer,
@@ -225,7 +266,8 @@ export default class ReadProperty extends BacnetService {
 			len += result.len
 		} else if (
 			objectId.type === ObjectType.CALENDAR &&
-			property.id === PropertyIdentifier.DATE_LIST
+			property.id === PropertyIdentifier.DATE_LIST &&
+			property.index === ASN1_ARRAY_ALL
 		) {
 			const result = baAsn1.decodeCalendarDatelist(
 				buffer,
@@ -236,6 +278,25 @@ export default class ReadProperty extends BacnetService {
 			values.push({
 				type: ApplicationTag.CALENDAR_ENTRY,
 				value: result.value,
+			} as ApplicationData)
+			len += result.len
+		} else if (
+			objectId.type === ObjectType.CALENDAR &&
+			property.id === PropertyIdentifier.DATE_LIST &&
+			property.index !== ASN1_ARRAY_ALL &&
+			property.index !== 0
+		) {
+			const result = baAsn1.decodeCalendarDatelist(
+				buffer,
+				offset + len,
+				apduLen - len,
+			)
+			if (!result || !Array.isArray(result.value) || result.value[0] == null) {
+				return undefined
+			}
+			values.push({
+				type: ApplicationTag.CALENDAR_ENTRY,
+				value: result.value[0],
 			} as ApplicationData)
 			len += result.len
 		} else {

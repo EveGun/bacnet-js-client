@@ -1,5 +1,11 @@
 import * as baAsn1 from '../asn1'
-import { ASN1_ARRAY_ALL, ASN1_NO_PRIORITY } from '../enum'
+import {
+	ASN1_ARRAY_ALL,
+	ASN1_NO_PRIORITY,
+	ApplicationTag,
+	ObjectType,
+	PropertyIdentifier,
+} from '../enum'
 import {
 	EncodeBuffer,
 	BACNetObjectID,
@@ -12,6 +18,7 @@ import {
 	WritePropertyMultipleObject,
 } from '../types'
 import { BacnetService } from './AbstractServices'
+import WriteProperty from './WriteProperty'
 
 export default class WritePropertyMultiple extends BacnetService {
 	public static encode(
@@ -27,13 +34,18 @@ export default class WritePropertyMultiple extends BacnetService {
 		)
 		baAsn1.encodeOpeningTag(buffer, 1)
 		values.forEach((pValue) => {
+			const propertyIndex = pValue.property.index ?? ASN1_ARRAY_ALL
 			baAsn1.encodeContextEnumerated(buffer, 0, pValue.property.id)
-			if (pValue.property.index !== ASN1_ARRAY_ALL) {
-				baAsn1.encodeContextUnsigned(buffer, 1, pValue.property.index)
+			if (propertyIndex !== ASN1_ARRAY_ALL) {
+				baAsn1.encodeContextUnsigned(buffer, 1, propertyIndex)
 			}
 			baAsn1.encodeOpeningTag(buffer, 2)
-			pValue.value.forEach((value) =>
-				baAsn1.bacappEncodeApplicationData(buffer, value),
+			WriteProperty.encodePropertyValuePayload(
+				buffer,
+				objectId.type,
+				pValue.property.id,
+				propertyIndex,
+				pValue.value as any,
 			)
 			baAsn1.encodeClosingTag(buffer, 2)
 			if (pValue.priority !== ASN1_NO_PRIORITY) {
@@ -95,23 +107,174 @@ export default class WritePropertyMultiple extends BacnetService {
 			)
 				return undefined
 			const values = []
-			while (
-				len + offset <= buffer.length &&
-				!baAsn1.decodeIsClosingTag(buffer, offset + len)
+			let handledScheduleCalendar = false
+			if (
+				objectId.type === ObjectType.SCHEDULE &&
+				propertyId === PropertyIdentifier.WEEKLY_SCHEDULE &&
+				arrayIndex === ASN1_ARRAY_ALL
 			) {
-				const value = baAsn1.bacappDecodeApplicationData(
+				const decodedWeekly = baAsn1.decodeWeeklySchedule(
 					buffer,
 					offset + len,
-					apduLen + offset,
-					objectId.type,
-					propertyId,
+					apduLen - len,
+					2,
 				)
-				if (!value) return undefined
-				len += value.len
-				delete value.len
-				values.push(value)
+				if (!decodedWeekly) return undefined
+				values.push({
+					type: ApplicationTag.WEEKLY_SCHEDULE,
+					value: decodedWeekly.value,
+				})
+				len += decodedWeekly.len
+				handledScheduleCalendar = true
+			} else if (
+				objectId.type === ObjectType.SCHEDULE &&
+				propertyId === PropertyIdentifier.WEEKLY_SCHEDULE &&
+				arrayIndex !== ASN1_ARRAY_ALL &&
+				arrayIndex !== 0
+			) {
+				const decodedWeekly = baAsn1.decodeWeeklySchedule(
+					buffer,
+					offset + len,
+					apduLen - len,
+					2,
+				)
+				if (!decodedWeekly || !Array.isArray(decodedWeekly.value[0])) {
+					return undefined
+				}
+				values.push({
+					type: ApplicationTag.WEEKLY_SCHEDULE,
+					value: decodedWeekly.value[0],
+				})
+				len += decodedWeekly.len
+				handledScheduleCalendar = true
+			} else if (
+				objectId.type === ObjectType.SCHEDULE &&
+				propertyId === PropertyIdentifier.EXCEPTION_SCHEDULE &&
+				arrayIndex === ASN1_ARRAY_ALL
+			) {
+				const decodedException = baAsn1.decodeExceptionSchedule(
+					buffer,
+					offset + len,
+					apduLen - len,
+					2,
+				)
+				if (!decodedException) return undefined
+				values.push({
+					type: ApplicationTag.SPECIAL_EVENT,
+					value: decodedException.value,
+				})
+				len += decodedException.len
+				handledScheduleCalendar = true
+			} else if (
+				objectId.type === ObjectType.SCHEDULE &&
+				propertyId === PropertyIdentifier.EXCEPTION_SCHEDULE &&
+				arrayIndex !== ASN1_ARRAY_ALL &&
+				arrayIndex !== 0
+			) {
+				const decodedException = baAsn1.decodeExceptionSchedule(
+					buffer,
+					offset + len,
+					apduLen - len,
+					2,
+				)
+				if (
+					!decodedException ||
+					!Array.isArray(decodedException.value) ||
+					decodedException.value[0] == null
+				) {
+					return undefined
+				}
+				values.push({
+					type: ApplicationTag.SPECIAL_EVENT,
+					value: decodedException.value[0],
+				})
+				len += decodedException.len
+				handledScheduleCalendar = true
+			} else if (
+				objectId.type === ObjectType.SCHEDULE &&
+				propertyId === PropertyIdentifier.EFFECTIVE_PERIOD &&
+				arrayIndex === ASN1_ARRAY_ALL
+			) {
+				const decodedEffective = baAsn1.decodeScheduleEffectivePeriod(
+					buffer,
+					offset + len,
+					apduLen - len,
+					2,
+					2,
+				)
+				if (!decodedEffective) return undefined
+				values.push({
+					type: ApplicationTag.DATERANGE,
+					value: decodedEffective.value,
+				})
+				len += decodedEffective.len
+				handledScheduleCalendar = true
+			} else if (
+				objectId.type === ObjectType.CALENDAR &&
+				propertyId === PropertyIdentifier.DATE_LIST &&
+				arrayIndex === ASN1_ARRAY_ALL
+			) {
+				const decodedDateList = baAsn1.decodeCalendarDatelist(
+					buffer,
+					offset + len,
+					apduLen - len,
+					2,
+					2,
+				)
+				if (!decodedDateList) return undefined
+				values.push({
+					type: ApplicationTag.CALENDAR_ENTRY,
+					value: decodedDateList.value,
+				})
+				len += decodedDateList.len
+				handledScheduleCalendar = true
+			} else if (
+				objectId.type === ObjectType.CALENDAR &&
+				propertyId === PropertyIdentifier.DATE_LIST &&
+				arrayIndex !== ASN1_ARRAY_ALL &&
+				arrayIndex !== 0
+			) {
+				const decodedDateList = baAsn1.decodeCalendarDatelist(
+					buffer,
+					offset + len,
+					apduLen - len,
+					2,
+					2,
+				)
+				if (
+					!decodedDateList ||
+					!Array.isArray(decodedDateList.value) ||
+					decodedDateList.value[0] == null
+				) {
+					return undefined
+				}
+				values.push({
+					type: ApplicationTag.CALENDAR_ENTRY,
+					value: decodedDateList.value[0],
+				})
+				len += decodedDateList.len
+				handledScheduleCalendar = true
 			}
-			len++
+
+			if (!handledScheduleCalendar) {
+				while (
+					len + offset <= buffer.length &&
+					!baAsn1.decodeIsClosingTag(buffer, offset + len)
+				) {
+					const value = baAsn1.bacappDecodeApplicationData(
+						buffer,
+						offset + len,
+						apduLen + offset,
+						objectId.type,
+						propertyId,
+					)
+					if (!value) return undefined
+					len += value.len
+					delete value.len
+					values.push(value)
+				}
+				len++
+			}
 			newEntry.value = values
 			let priority = ASN1_NO_PRIORITY
 			result = baAsn1.decodeTagNumberAndValue(buffer, offset + len)

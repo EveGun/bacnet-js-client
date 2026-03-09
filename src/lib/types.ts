@@ -276,12 +276,37 @@ export type BACNetCalendarDateListEntry =
 
 export type BACNetCalendarDateListPayload = BACNetCalendarDateListEntry[]
 
+export type BACNetArraySizeValue =
+	| number
+	| BACNetAppData<ApplicationTag.UNSIGNED_INTEGER, number>
+
+export type BACNetWeeklyScheduleWriteValue =
+	| BACNetWeeklySchedulePayload
+	| BACNetTimeValueEntry[]
+	| BACNetArraySizeValue
+
+export type BACNetExceptionScheduleWriteValue =
+	| BACNetExceptionSchedulePayload
+	| BACNetSpecialEventEntry
+	| BACNetArraySizeValue
+
+export type BACNetEffectivePeriodWriteValue =
+	| BACNetEffectivePeriodPayload
+	| BACNetDateAppData
+	| BACNetDateValue
+	| BACNetArraySizeValue
+
+export type BACNetCalendarDateListWriteValue =
+	| BACNetCalendarDateListPayload
+	| BACNetCalendarDateListEntry
+	| BACNetArraySizeValue
+
 export type BACNetWritePropertyValues =
 	| BACNetAppData[]
-	| BACNetWeeklySchedulePayload
-	| BACNetExceptionSchedulePayload
-	| BACNetEffectivePeriodPayload
-	| BACNetCalendarDateListPayload
+	| BACNetWeeklyScheduleWriteValue
+	| BACNetExceptionScheduleWriteValue
+	| BACNetEffectivePeriodWriteValue
+	| BACNetCalendarDateListWriteValue
 
 /**
  * Map between BACnet Application Tags and TypeScript types.
@@ -929,7 +954,7 @@ export interface DeviceObjectResult {
 
 export interface WritePropertyMultipleValue {
 	property: PropertyReference
-	value: BACNetAppData[]
+	value: BACNetWritePropertyValues
 	priority: number
 }
 
