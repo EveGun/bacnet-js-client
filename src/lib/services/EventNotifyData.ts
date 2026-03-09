@@ -1010,6 +1010,52 @@ export default class EventNotifyData extends BacnetService {
 		return undefined
 	}
 
+	private static decodeRawOpeningTagValue(
+		buffer: Buffer,
+		offset: number,
+		tagNumber: number,
+	): { len: number; raw: Buffer } | undefined {
+		const openingTagLen = EventNotifyData.decodeOpeningTag(
+			buffer,
+			offset,
+			tagNumber,
+		)
+		if (openingTagLen == null) return undefined
+
+		let len = openingTagLen
+		let depth = 1
+		while (offset + len < buffer.length) {
+			const result = baAsn1.decodeTagNumberAndValue(buffer, offset + len)
+			const isOpening = baAsn1.decodeIsOpeningTag(buffer, offset + len)
+			const isClosing = baAsn1.decodeIsClosingTag(buffer, offset + len)
+
+			if (isClosing) {
+				depth -= 1
+				if (depth === 0) {
+					const raw = Buffer.from(
+						buffer.subarray(offset + openingTagLen, offset + len),
+					)
+					len += result.len
+					return {
+						len,
+						raw,
+					}
+				}
+				len += result.len
+				continue
+			}
+
+			len += result.len
+			if (isOpening) {
+				depth += 1
+				continue
+			}
+			len += result.value
+		}
+
+		return undefined
+	}
+
 	private static decodeDeviceObjectPropertyRef(
 		buffer: Buffer,
 		offset: number,
@@ -1105,8 +1151,26 @@ export default class EventNotifyData extends BacnetService {
 			case EventType.CHANGE_OF_DISCRETE_VALUE:
 			case EventType.CHANGE_OF_TIMER:
 				break
+			case EventType.EXTENDED: {
+				const rawValues = EventNotifyData.decodeRawOpeningTagValue(
+					buffer,
+					offset,
+					12,
+				)
+				if (!rawValues) return undefined
+				eventData.eventValuesRaw = rawValues.raw
+				return rawValues.len
+			}
 			default:
-				return EventNotifyData.skipOpeningTag(buffer, offset, 12)
+				// Preserve unknown/proprietary event values so caller can still consume them.
+				const rawValues = EventNotifyData.decodeRawOpeningTagValue(
+					buffer,
+					offset,
+					12,
+				)
+				if (!rawValues) return undefined
+				eventData.eventValuesRaw = rawValues.raw
+				return rawValues.len
 		}
 
 		let len = 0

@@ -940,7 +940,44 @@ test.describe('bacnet - Services layer EventNotifyData unit', () => {
 		assert.strictEqual(result.ackRequired, undefined)
 		assert.strictEqual(result.fromState, undefined)
 		assert.strictEqual(result.toState, 1)
+		assert.ok(Buffer.isBuffer(result.eventValuesRaw))
 		assert.strictEqual(result.len, buffer.offset)
+	})
+
+	test('should preserve raw event-values for proprietary or unknown event type', () => {
+		const rawEventValues = utils.getBuffer()
+		baAsn1.encodeOpeningTag(rawEventValues, 30)
+		baAsn1.encodeContextUnsigned(rawEventValues, 0, 444)
+		baAsn1.encodeClosingTag(rawEventValues, 30)
+
+		const buffer = utils.getBuffer()
+		const date = new Date()
+		date.setMilliseconds(880)
+		EventNotifyData.encode(buffer, {
+			processId: 18,
+			initiatingObjectId: { type: 8, instance: 1319071 },
+			eventObjectId: { type: 0, instance: 4 },
+			timeStamp: { type: TimeStamp.DATETIME, value: date },
+			notificationClass: 3,
+			priority: 5,
+			eventType: EventType.COMPLEX_EVENT_TYPE,
+			notifyType: NotifyType.EVENT,
+			toState: 1,
+			eventValuesRaw: Buffer.from(
+				rawEventValues.buffer.subarray(0, rawEventValues.offset),
+			),
+		})
+
+		const result = EventNotifyData.decode(buffer.buffer, 0)
+		assert.ok(result)
+		assert.strictEqual(result.eventType, EventType.COMPLEX_EVENT_TYPE)
+		assert.ok(Buffer.isBuffer(result.eventValuesRaw))
+		assert.deepStrictEqual(
+			result.eventValuesRaw,
+			Buffer.from(
+				rawEventValues.buffer.subarray(0, rawEventValues.offset),
+			),
+		)
 	})
 
 	test('should encode extended event values using raw payload', () => {
@@ -981,5 +1018,6 @@ test.describe('bacnet - Services layer EventNotifyData unit', () => {
 		assert.strictEqual(result.eventType, EventType.EXTENDED)
 		assert.strictEqual(result.notifyType, NotifyType.EVENT)
 		assert.strictEqual(result.toState, 1)
+		assert.ok(Buffer.isBuffer(result.eventValuesRaw))
 	})
 })
