@@ -28,6 +28,7 @@ interface CliConfig {
 	mode: Mode
 	timeoutMs: number
 	localPort?: number
+	selectedSteps: Set<number> | null
 }
 
 interface StepResult {
@@ -87,30 +88,34 @@ async function main() {
 	context.valueTag = await inferValueTag(context)
 	console.log(`[INFO] valueTag=${context.valueTag}`)
 
-	const steps: Array<() => Promise<StepResult>> = [
-		() => runStep('1) WP full write + RP verify (WEEKLY_SCHEDULE)', context, stepWeeklyWpRp),
-		() => runStep('2) WPM full write + RPM verify (WEEKLY_SCHEDULE)', context, stepWeeklyWpmRpm),
-		() => runStep('3) WP indexed day write + RP indexed read (WEEKLY_SCHEDULE)', context, stepWeeklyIndexedWpRp),
-		() => runStep('4) WPM indexed day write + RPM indexed read (WEEKLY_SCHEDULE)', context, stepWeeklyIndexedWpmRpm),
-		() => runStep('5) WP array size write + RP read size (WEEKLY_SCHEDULE)', context, stepWeeklySizeWpRp),
-		() => runStep('6) WPM array size write + RPM read size (WEEKLY_SCHEDULE)', context, stepWeeklySizeWpmRpm),
-		() => runStep('7) WP full write + RP verify (EXCEPTION_SCHEDULE)', context, stepExceptionWpRp),
-		() => runStep('8) WPM full write + RPM verify (EXCEPTION_SCHEDULE)', context, stepExceptionWpmRpm),
-		() => runStep('9) WP indexed exception write + RP indexed read', context, stepExceptionIndexedWpRp),
-		() => runStep('10) WPM indexed exception write + RPM indexed read', context, stepExceptionIndexedWpmRpm),
-		() => runStep('11) Calendar reference in exception schedule', context, stepCalendarReference),
-		() => runStep('12) DATE_LIST write/read via WP/RP', context, stepDateListWpRp),
-		() => runStep('13) DATE_LIST write/read via WPM/RPM', context, stepDateListWpmRpm),
-		() => runStep('14) EFFECTIVE_PERIOD write/read via WP/RP', context, stepEffectivePeriodWpRp),
-		() => runStep('15) EFFECTIVE_PERIOD write/read via WPM/RPM', context, stepEffectivePeriodWpmRpm),
-		() => runStep('16) Negative compliance checks', context, stepNegativeCompliance),
-		() => runStep('17) Consistency check RP vs RPM', context, stepConsistencyRpVsRpm),
-		() => runStep('18) Consistency check WP vs WPM', context, stepConsistencyWpVsWpm),
+	const allSteps: Array<{ id: number; run: () => Promise<StepResult> }> = [
+		{ id: 1, run: () => runStep('1) WP full write + RP verify (WEEKLY_SCHEDULE)', context, stepWeeklyWpRp) },
+		{ id: 2, run: () => runStep('2) WPM full write + RPM verify (WEEKLY_SCHEDULE)', context, stepWeeklyWpmRpm) },
+		{ id: 3, run: () => runStep('3) WP indexed day write + RP indexed read (WEEKLY_SCHEDULE)', context, stepWeeklyIndexedWpRp) },
+		{ id: 4, run: () => runStep('4) WPM indexed day write + RPM indexed read (WEEKLY_SCHEDULE)', context, stepWeeklyIndexedWpmRpm) },
+		{ id: 5, run: () => runStep('5) WP array size write + RP read size (WEEKLY_SCHEDULE)', context, stepWeeklySizeWpRp) },
+		{ id: 6, run: () => runStep('6) WPM array size write + RPM read size (WEEKLY_SCHEDULE)', context, stepWeeklySizeWpmRpm) },
+		{ id: 7, run: () => runStep('7) WP full write + RP verify (EXCEPTION_SCHEDULE)', context, stepExceptionWpRp) },
+		{ id: 8, run: () => runStep('8) WPM full write + RPM verify (EXCEPTION_SCHEDULE)', context, stepExceptionWpmRpm) },
+		{ id: 9, run: () => runStep('9) WP indexed exception write + RP indexed read', context, stepExceptionIndexedWpRp) },
+		{ id: 10, run: () => runStep('10) WPM indexed exception write + RPM indexed read', context, stepExceptionIndexedWpmRpm) },
+		{ id: 11, run: () => runStep('11) Calendar reference in exception schedule', context, stepCalendarReference) },
+		{ id: 12, run: () => runStep('12) DATE_LIST write/read via WP/RP', context, stepDateListWpRp) },
+		{ id: 13, run: () => runStep('13) DATE_LIST write/read via WPM/RPM', context, stepDateListWpmRpm) },
+		{ id: 14, run: () => runStep('14) EFFECTIVE_PERIOD write/read via WP/RP', context, stepEffectivePeriodWpRp) },
+		{ id: 15, run: () => runStep('15) EFFECTIVE_PERIOD write/read via WPM/RPM', context, stepEffectivePeriodWpmRpm) },
+		{ id: 16, run: () => runStep('16) Negative compliance checks', context, stepNegativeCompliance) },
+		{ id: 17, run: () => runStep('17) Consistency check RP vs RPM', context, stepConsistencyRpVsRpm) },
+		{ id: 18, run: () => runStep('18) Consistency check WP vs WPM', context, stepConsistencyWpVsWpm) },
 	]
+
+	const steps = config.selectedSteps
+		? allSteps.filter((entry) => config.selectedSteps?.has(entry.id))
+		: allSteps
 
 	const results: StepResult[] = []
 	for (const step of steps) {
-		results.push(await step())
+		results.push(await step.run())
 	}
 
 	const passed = results.filter((x) => x.status === 'PASS')
@@ -222,6 +227,7 @@ function buildConfig(argValues: Map<string, string>): CliConfig {
 		mode,
 		timeoutMs: parseNumber(argValues.get('timeoutMs'), defaultTimeout),
 		localPort: localPortValue ? parseNumber(localPortValue, NaN) : undefined,
+		selectedSteps: parseSteps(argValues.get('steps')),
 	}
 }
 
@@ -229,6 +235,15 @@ function parseNumber(value: string | undefined, fallback: number): number {
 	if (!value) return fallback
 	const parsed = Number.parseInt(value, 10)
 	return Number.isFinite(parsed) ? parsed : fallback
+}
+
+function parseSteps(value: string | undefined): Set<number> | null {
+	if (!value) return null
+	const parsed = value
+		.split(',')
+		.map((v) => Number.parseInt(v.trim(), 10))
+		.filter((n) => Number.isInteger(n) && n > 0)
+	return parsed.length > 0 ? new Set(parsed) : null
 }
 
 function smallWeeklyRows(config: CliConfig): number {
