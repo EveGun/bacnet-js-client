@@ -40,4 +40,41 @@ export default class TimeSync extends BacnetService {
 			),
 		}
 	}
+
+	public static decodeUtc(buffer: Buffer, offset: number, _apduLen?: number) {
+		let len = 0
+		let result: any
+		result = baAsn1.decodeTagNumberAndValue(buffer, offset + len)
+		len += result.len
+		if (result.tagNumber !== ApplicationTag.DATE) return undefined
+		const date = baAsn1.decodeDate(buffer, offset + len)
+		len += date.len
+		result = baAsn1.decodeTagNumberAndValue(buffer, offset + len)
+		len += result.len
+		if (result.tagNumber !== ApplicationTag.TIME) return undefined
+		const time = baAsn1.decodeBacnetTime(buffer, offset + len)
+		len += time.len
+
+		if (date.value === baAsn1.ZERO_DATE || time.value === baAsn1.ZERO_DATE) {
+			return {
+				len,
+				value: baAsn1.ZERO_DATE,
+			}
+		}
+
+		return {
+			len,
+			value: new Date(
+				Date.UTC(
+					date.value.getFullYear(),
+					date.value.getMonth(),
+					date.value.getDate(),
+					time.value.getHours(),
+					time.value.getMinutes(),
+					time.value.getSeconds(),
+					time.value.getMilliseconds(),
+				),
+			),
+		}
+	}
 }

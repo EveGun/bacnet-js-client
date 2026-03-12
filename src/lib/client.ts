@@ -525,12 +525,27 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			name as keyof typeof ServicesMap
 		] as BacnetService
 
-		if (serviceHandler) {
-			try {
-				content.payload = serviceHandler.decode(buffer, offset, length)
-				trace(
-					`Handled service request${id}:`,
-					name,
+			if (serviceHandler) {
+				try {
+					const utcDecoder = serviceHandler as {
+						decode: (
+							buffer: Buffer,
+							offset: number,
+							apduLen: number,
+						) => unknown
+						decodeUtc?: (
+							buffer: Buffer,
+							offset: number,
+							apduLen: number,
+						) => unknown
+					}
+					content.payload =
+						name === 'timeSyncUTC' && typeof utcDecoder.decodeUtc === 'function'
+							? utcDecoder.decodeUtc(buffer, offset, length)
+							: serviceHandler.decode(buffer, offset, length)
+					trace(
+						`Handled service request${id}:`,
+						name,
 					JSON.stringify(content),
 				)
 			} catch (e) {

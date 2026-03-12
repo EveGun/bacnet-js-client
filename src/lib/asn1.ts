@@ -531,6 +531,9 @@ export const encodeApplicationDateUtc = (
 	buffer: EncodeBuffer,
 	value: Date,
 ): void => {
+	if (Number.isNaN(value.getTime())) {
+		throw new Error(`invalid date: ${value}`)
+	}
 	encodeTag(buffer, ApplicationTag.DATE, false, 4)
 	encodeBacnetDateUtc(buffer, value)
 }
@@ -546,7 +549,10 @@ const encodeBacnetTimeUtc = (buffer: EncodeBuffer, value: Date): void => {
 	buffer.buffer[buffer.offset++] = value.getUTCHours()
 	buffer.buffer[buffer.offset++] = value.getUTCMinutes()
 	buffer.buffer[buffer.offset++] = value.getUTCSeconds()
-	buffer.buffer[buffer.offset++] = value.getUTCMilliseconds() / 10
+	buffer.buffer[buffer.offset++] = Math.min(
+		99,
+		Math.round(value.getUTCMilliseconds() / 10),
+	)
 }
 
 export const encodeApplicationTime = (
@@ -570,6 +576,9 @@ export const encodeApplicationTimeUtc = (
 	buffer: EncodeBuffer,
 	value: Date,
 ): void => {
+	if (Number.isNaN(value.getTime())) {
+		throw new Error(`invalid time: ${value}`)
+	}
 	encodeTag(buffer, ApplicationTag.TIME, false, 4)
 	encodeBacnetTimeUtc(buffer, value)
 }
