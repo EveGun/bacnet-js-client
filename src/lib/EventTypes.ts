@@ -15,7 +15,7 @@ import {
 	SubscribeCovPayload,
 	DeviceCommunicationControlPayload,
 	ReinitializeDevicePayload,
-	EventNotificationPayload,
+	EventNotifyDataResult,
 	ReadRangePayload,
 	ObjectOperationPayload,
 	ListElementOperationPayload,
@@ -150,7 +150,7 @@ export interface BACnetClientEvents {
 		content: BaseEventContent & { payload: ReinitializeDevicePayload },
 	) => void
 	eventNotify: (
-		content: BaseEventContent & { payload: EventNotificationPayload },
+		content: BaseEventContent & { payload: EventNotifyDataResult },
 	) => void
 	readRange: (
 		content: BaseEventContent & { payload: ReadRangePayload },
