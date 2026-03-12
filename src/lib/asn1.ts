@@ -2844,6 +2844,10 @@ export const decodeRange = (
 		result.push(record)
 	}
 
+	// A valid item-data payload must terminate with closing tag [5].
+	// If we consumed records up to maxOffset without reaching it, treat as malformed.
+	if (!decodeIsClosingTagNumber(buffer, offset + len, 5)) return undefined
+
 	return { len, value: result }
 }
 
