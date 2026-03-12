@@ -1253,7 +1253,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 	): Promise<DecodeAcknowledgeSingleResult> {
 		const settings: ReadPropertyOptions = {
 			maxSegments:
-				(options as ReadPropertyOptions).maxSegments ||
+				(options as ReadPropertyOptions).maxSegments ??
 				MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu:
 				(options as ReadPropertyOptions).maxApdu ||
@@ -1332,7 +1332,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 	): Promise<void> {
 		const settings: WritePropertyOptions = {
 			maxSegments:
-				(options as WritePropertyOptions).maxSegments ||
+				(options as WritePropertyOptions).maxSegments ??
 				MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu:
 				(options as WritePropertyOptions).maxApdu ||
@@ -1341,7 +1341,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 				(options as WritePropertyOptions).invokeId ||
 				this._getInvokeId(),
 			arrayIndex:
-				(options as WritePropertyOptions).arrayIndex || ASN1_ARRAY_ALL,
+				(options as WritePropertyOptions).arrayIndex ?? ASN1_ARRAY_ALL,
 			priority:
 				(options as WritePropertyOptions).priority || ASN1_NO_PRIORITY,
 		}
@@ -1392,7 +1392,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 	): Promise<DecodeAcknowledgeMultipleResult> {
 		const settings = {
 			maxSegments:
-				(options as ServiceOptions).maxSegments ||
+				(options as ServiceOptions).maxSegments ??
 				MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu:
 				(options as ServiceOptions).maxApdu ||
@@ -1452,7 +1452,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 	): Promise<void> {
 		const settings = {
 			maxSegments:
-				(options as ServiceOptions).maxSegments ||
+				(options as ServiceOptions).maxSegments ??
 				MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu:
 				(options as ServiceOptions).maxApdu ||
@@ -1497,7 +1497,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 	): Promise<void> {
 		const settings = {
 			maxSegments:
-				(options as ServiceOptions).maxSegments ||
+				(options as ServiceOptions).maxSegments ??
 				MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu:
 				(options as ServiceOptions).maxApdu ||
@@ -1549,7 +1549,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 	): Promise<void> {
 		const settings = {
 			maxSegments:
-				(options as DeviceCommunicationOptions).maxSegments ||
+				(options as DeviceCommunicationOptions).maxSegments ??
 				MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu:
 				(options as DeviceCommunicationOptions).maxApdu ||
@@ -1595,7 +1595,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 	): Promise<void> {
 		const settings = {
 			maxSegments:
-				(options as ReinitializeDeviceOptions).maxSegments ||
+				(options as ReinitializeDeviceOptions).maxSegments ??
 				MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu:
 				(options as ReinitializeDeviceOptions).maxApdu ||
@@ -1642,7 +1642,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		options: WriteFileOptions = {},
 	): Promise<DecodeAtomicWriteFileResult> {
 		const settings = {
-			maxSegments: options.maxSegments || MaxSegmentsAccepted.SEGMENTS_65,
+			maxSegments: options.maxSegments ?? MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu: options.maxApdu || MaxApduLengthAccepted.OCTETS_1476,
 			invokeId: options.invokeId || this._getInvokeId(),
 		}
@@ -1694,7 +1694,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 	): Promise<DecodeAtomicReadFileResult> {
 		const settings = {
 			maxSegments:
-				(options as ServiceOptions).maxSegments ||
+				(options as ServiceOptions).maxSegments ??
 				MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu:
 				(options as ServiceOptions).maxApdu ||
@@ -1746,7 +1746,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 	): Promise<ReadRangeAcknowledge> {
 		const settings = {
 			maxSegments:
-				(options as ServiceOptions).maxSegments ||
+				(options as ServiceOptions).maxSegments ??
 				MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu:
 				(options as ServiceOptions).maxApdu ||
@@ -1809,7 +1809,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		options: ServiceOptions = {},
 	): Promise<void> {
 		const settings = {
-			maxSegments: options.maxSegments || MaxSegmentsAccepted.SEGMENTS_65,
+			maxSegments: options.maxSegments ?? MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu: options.maxApdu || MaxApduLengthAccepted.OCTETS_1476,
 			invokeId: options.invokeId || this._getInvokeId(),
 		}
@@ -1854,7 +1854,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		options: ServiceOptions = {},
 	): Promise<void> {
 		const settings = {
-			maxSegments: options.maxSegments || MaxSegmentsAccepted.SEGMENTS_65,
+			maxSegments: options.maxSegments ?? MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu: options.maxApdu || MaxApduLengthAccepted.OCTETS_1476,
 			invokeId: options.invokeId || this._getInvokeId(),
 		}
@@ -1945,7 +1945,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		options: ServiceOptions = {},
 	): Promise<void> {
 		const settings = {
-			maxSegments: options.maxSegments || MaxSegmentsAccepted.SEGMENTS_65,
+			maxSegments: options.maxSegments ?? MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu: options.maxApdu || MaxApduLengthAccepted.OCTETS_1476,
 			invokeId: options.invokeId || this._getInvokeId(),
 		}
@@ -1979,7 +1979,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		options: ServiceOptions = {},
 	): Promise<void> {
 		const settings = {
-			maxSegments: options.maxSegments || MaxSegmentsAccepted.SEGMENTS_65,
+			maxSegments: options.maxSegments ?? MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu: options.maxApdu || MaxApduLengthAccepted.OCTETS_1476,
 			invokeId: options.invokeId || this._getInvokeId(),
 		}
@@ -2018,7 +2018,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		options: ServiceOptions = {},
 	): Promise<void> {
 		const settings = {
-			maxSegments: options.maxSegments || MaxSegmentsAccepted.SEGMENTS_65,
+			maxSegments: options.maxSegments ?? MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu: options.maxApdu || MaxApduLengthAccepted.OCTETS_1476,
 			invokeId: options.invokeId || this._getInvokeId(),
 		}
@@ -2063,7 +2063,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		options: ServiceOptions = {},
 	): Promise<void> {
 		const settings = {
-			maxSegments: options.maxSegments || MaxSegmentsAccepted.SEGMENTS_65,
+			maxSegments: options.maxSegments ?? MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu: options.maxApdu || MaxApduLengthAccepted.OCTETS_1476,
 			invokeId: options.invokeId || this._getInvokeId(),
 		}
@@ -2103,7 +2103,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 	): Promise<BACNetAlarm[]> {
 		const settings: ServiceOptions = {
 			maxSegments:
-				(options as ServiceOptions).maxSegments ||
+				(options as ServiceOptions).maxSegments ??
 				MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu:
 				(options as ServiceOptions).maxApdu ||
@@ -2153,7 +2153,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 	): Promise<BACNetEventInformation[]> {
 		const settings: ServiceOptions = {
 			maxSegments:
-				(options as ServiceOptions).maxSegments ||
+				(options as ServiceOptions).maxSegments ??
 				MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu:
 				(options as ServiceOptions).maxApdu ||
@@ -2215,7 +2215,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 	): Promise<void> {
 		const settings: ServiceOptions = {
 			maxSegments:
-				(options as ServiceOptions).maxSegments ||
+				(options as ServiceOptions).maxSegments ??
 				MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu:
 				(options as ServiceOptions).maxApdu ||
@@ -2264,7 +2264,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 	): Promise<void> {
 		const settings: ServiceOptions = {
 			maxSegments:
-				(options as ServiceOptions).maxSegments ||
+				(options as ServiceOptions).maxSegments ??
 				MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu:
 				(options as ServiceOptions).maxApdu ||
@@ -2322,7 +2322,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		options: EnrollmentOptions = {},
 	): Promise<EnrollmentSummaryAcknowledge> {
 		const settings: ServiceOptions = {
-			maxSegments: options.maxSegments || MaxSegmentsAccepted.SEGMENTS_65,
+			maxSegments: options.maxSegments ?? MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu: options.maxApdu || MaxApduLengthAccepted.OCTETS_1476,
 			invokeId: options.invokeId || this._getInvokeId(),
 		}
@@ -2395,7 +2395,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 	): Promise<void> {
 		const settings: ServiceOptions = {
 			maxSegments:
-				(options as ServiceOptions).maxSegments ||
+				(options as ServiceOptions).maxSegments ??
 				MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu:
 				(options as ServiceOptions).maxApdu ||
