@@ -791,6 +791,65 @@ test.describe('bacnet - Services layer EventNotifyData unit', () => {
 		assert.ok(result.commandFailureFeedbackValueDecoded)
 	})
 
+	test('should encode command-failure with CONTEXT_SPECIFIC_DECODED wrappers', () => {
+		const buffer = utils.getBuffer()
+		const date = new Date()
+		date.setMilliseconds(880)
+		assert.doesNotThrow(() => {
+			EventNotifyData.encode(buffer, {
+				processId: 13,
+				initiatingObjectId: { type: 8, instance: 1319071 },
+				eventObjectId: { type: 13, instance: 43 },
+				timeStamp: { type: TimeStamp.DATETIME, value: date },
+				notificationClass: 2,
+				priority: 12,
+				eventType: EventType.COMMAND_FAILURE,
+				notifyType: NotifyType.EVENT,
+				ackRequired: false,
+				fromState: 0,
+				toState: 1,
+				commandFailureCommandValueDecoded: {
+					type: ApplicationTag.CONTEXT_SPECIFIC_DECODED,
+					value: {
+						type: ApplicationTag.SIGNED_INTEGER,
+						value: -11,
+					},
+				},
+				commandFailureStatusFlags: {
+					bitsUsed: 4,
+					value: [0b00001010],
+				},
+				commandFailureFeedbackValueDecoded: {
+					type: ApplicationTag.CONTEXT_SPECIFIC_DECODED,
+					value: {
+						type: ApplicationTag.UNSIGNED_INTEGER,
+						value: 42,
+					},
+				},
+			})
+		})
+
+		const result = EventNotifyData.decode(buffer.buffer, 0)
+		assert.ok(result)
+		assert.strictEqual(result.eventType, EventType.COMMAND_FAILURE)
+		const decodedCommandValue =
+			result.commandFailureCommandValueDecoded?.value
+		const decodedFeedbackValue =
+			result.commandFailureFeedbackValueDecoded?.value
+		assert.strictEqual(
+			Array.isArray(decodedCommandValue)
+				? decodedCommandValue[0]?.value
+				: decodedCommandValue,
+			-11,
+		)
+		assert.strictEqual(
+			Array.isArray(decodedFeedbackValue)
+				? decodedFeedbackValue[0]?.value
+				: decodedFeedbackValue,
+			42,
+		)
+	})
+
 	test('should encode and decode access-event event values', () => {
 		const buffer = utils.getBuffer()
 		const date = new Date()

@@ -734,13 +734,52 @@ export default class EventNotifyData extends BacnetService {
 		}
 
 		if (decodedValue) {
+			const normalizedDecodedValue =
+				EventNotifyData.normalizeUnknownDecodedValue(decodedValue)
+			if (!normalizedDecodedValue) {
+				throw new Error(
+					`Unsupported decoded value for context tag ${tagNumber}`,
+				)
+			}
 			baAsn1.encodeOpeningTag(buffer, tagNumber)
-			baAsn1.bacappEncodeApplicationData(buffer, decodedValue)
+			baAsn1.bacappEncodeApplicationData(buffer, normalizedDecodedValue)
 			baAsn1.encodeClosingTag(buffer, tagNumber)
 			return
 		}
 
 		throw new Error(`Missing value for context tag ${tagNumber}`)
+	}
+
+	private static normalizeUnknownDecodedValue(
+		decodedValue: BACNetAppData,
+	): BACNetAppData | undefined {
+		if (decodedValue.type !== ApplicationTag.CONTEXT_SPECIFIC_DECODED) {
+			return decodedValue
+		}
+
+		const wrapped = decodedValue.value as any
+		const unwrapped = Array.isArray(wrapped)
+			? wrapped.length === 1
+				? wrapped[0]
+				: undefined
+			: wrapped
+		if (
+			!unwrapped ||
+			typeof unwrapped !== 'object' ||
+			!('type' in unwrapped) ||
+			!('value' in unwrapped)
+		) {
+			return undefined
+		}
+
+		const normalized: BACNetAppData = {
+			type: unwrapped.type,
+			value: unwrapped.value,
+		}
+		if (unwrapped.encoding !== undefined) {
+			normalized.encoding = unwrapped.encoding
+		}
+		return normalized
 	}
 
 	private static encodeContextDeviceObjectReference(
