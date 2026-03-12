@@ -280,22 +280,46 @@ export type BACNetArraySizeValue =
 	| number
 	| BACNetAppData<ApplicationTag.UNSIGNED_INTEGER, number>
 
+/**
+ * Supported payloads for writing `WEEKLY_SCHEDULE`.
+ * - full property (`arrayIndex = ASN1_ARRAY_ALL`): `BACNetTimeValueEntry[][]`
+ * - single day (`arrayIndex = 1..7`): `BACNetTimeValueEntry[]`
+ * - array size (`arrayIndex = 0`): unsigned integer length
+ */
 export type BACNetWeeklyScheduleWriteValue =
 	| BACNetWeeklySchedulePayload
 	| BACNetTimeValueEntry[]
 	| BACNetArraySizeValue
 
+/**
+ * Supported payloads for writing `EXCEPTION_SCHEDULE`.
+ * - full property (`arrayIndex = ASN1_ARRAY_ALL`): `BACNetSpecialEventEntry[]`
+ * - single entry (`arrayIndex >= 1`): `BACNetSpecialEventEntry`
+ * - array size (`arrayIndex = 0`): unsigned integer length
+ */
 export type BACNetExceptionScheduleWriteValue =
 	| BACNetExceptionSchedulePayload
 	| BACNetSpecialEventEntry
 	| BACNetArraySizeValue
 
+/**
+ * Supported payloads for writing `EFFECTIVE_PERIOD`.
+ * - full property (`arrayIndex = ASN1_ARRAY_ALL`): `[startDate, endDate]`
+ * - indexed date (`arrayIndex = 1..2`): single date
+ * - array size (`arrayIndex = 0`): unsigned integer length
+ */
 export type BACNetEffectivePeriodWriteValue =
 	| BACNetEffectivePeriodPayload
 	| BACNetDateAppData
 	| BACNetDateValue
 	| BACNetArraySizeValue
 
+/**
+ * Supported payloads for writing `DATE_LIST`.
+ * - full property (`arrayIndex = ASN1_ARRAY_ALL`): calendar entry array
+ * - single entry (`arrayIndex >= 1`): one calendar entry
+ * - array size (`arrayIndex = 0`): unsigned integer length
+ */
 export type BACNetCalendarDateListWriteValue =
 	| BACNetCalendarDateListPayload
 	| BACNetCalendarDateListEntry
@@ -560,6 +584,7 @@ export interface ServiceOptions {
 }
 
 export interface ReadPropertyOptions extends ServiceOptions {
+	/** Optional array index. Use `0` for array length and `ASN1_ARRAY_ALL` for full value. */
 	arrayIndex?: number
 }
 
@@ -568,6 +593,7 @@ export interface WriteFileOptions extends ServiceOptions {
 }
 
 export interface WritePropertyOptions extends ServiceOptions {
+	/** Optional array index. Supports indexed schedule/calendar writes and array-length writes (`0`). */
 	arrayIndex?: number
 	priority?: number
 }

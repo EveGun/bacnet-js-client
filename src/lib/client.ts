@@ -1119,6 +1119,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 
 	/**
 	 * The readProperty command reads a single property of an object from a device.
+	 * Use `options.arrayIndex` for indexed array reads (`0` = array size).
 	 */
 
 	async readProperty(
@@ -1195,6 +1196,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 
 	/**
 	 * The writeProperty command writes a single property of an object to a device.
+	 * `options.arrayIndex` supports indexed writes for schedule/calendar properties.
 	 */
 	async writeProperty(
 		receiver: BACNetAddress,
