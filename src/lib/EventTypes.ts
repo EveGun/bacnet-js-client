@@ -187,6 +187,26 @@ export interface BACnetClientEvents {
 	registerForeignDevice: (
 		content: BaseEventContent & { payload: RegisterForeignDevicePayload },
 	) => void
+	fdrRegistered: (
+		content: BaseEventContent & {
+			payload: { address: string; ttl: number; expiresAt: number }
+		},
+	) => void
+	fdrExpiring: (
+		content: BaseEventContent & {
+			payload: { address: string; ttl: number; expiresAt: number }
+		},
+	) => void
+	fdrExpired: (
+		content: BaseEventContent & {
+			payload: { address: string; ttl: number; expiredAt: number }
+		},
+	) => void
+	forwardedNpduDroppedNoFdr: (
+		content: BaseEventContent & {
+			payload: { address: string }
+		},
+	) => void
 	iAm: (content: BaseEventContent & { payload: IAMResult }) => void
 	whoIs: (content: BaseEventContent & { payload: WhoIsResult }) => void
 	whoHas: (content: BaseEventContent & { payload: WhoHasPayload }) => void

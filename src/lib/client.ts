@@ -202,7 +202,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		{
 			ttl: number
 			expiresAt: number
-			renewTimer: NodeJS.Timeout
+			expiringTimer: NodeJS.Timeout
 			expiryTimer: NodeJS.Timeout
 		}
 	>
@@ -346,36 +346,54 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		const active = this._getActiveForeignDeviceRegistrations()
 		const previous = active.get(normalizedAddress)
 		if (previous) {
-			clearTimeout(previous.renewTimer)
+			clearTimeout(previous.expiringTimer)
 			clearTimeout(previous.expiryTimer)
 		}
 
 		const ttlMs = ttlSeconds * 1000
 		const now = Date.now()
-		const renewDelayMs = Math.max(1, Math.floor(ttlMs * 0.8))
+		const expiresAt = now + ttlMs
+		const expiringDelayMs = Math.max(1, Math.floor(ttlMs * 0.8))
 
-		const renewTimer = setTimeout(() => {
-			// Auto-renew is best-effort and should not crash user applications.
-			this.registerForeignDevice(
-				{ address: normalizedAddress },
-				ttlSeconds,
-			).catch(() => undefined)
-		}, renewDelayMs)
-		if (typeof renewTimer.unref === 'function') {
-			renewTimer.unref()
+		const expiringTimer = setTimeout(() => {
+			this.emit('fdrExpiring', {
+				payload: {
+					address: normalizedAddress,
+					ttl: ttlSeconds,
+					expiresAt,
+				},
+			})
+		}, expiringDelayMs)
+		if (typeof expiringTimer.unref === 'function') {
+			expiringTimer.unref()
 		}
 
 		const expiryTimer = setTimeout(() => {
 			active.delete(normalizedAddress)
+			this.emit('fdrExpired', {
+				payload: {
+					address: normalizedAddress,
+					ttl: ttlSeconds,
+					expiredAt: Date.now(),
+				},
+			})
 		}, ttlMs)
 		if (typeof expiryTimer.unref === 'function') {
 			expiryTimer.unref()
 		}
 
+		this.emit('fdrRegistered', {
+			payload: {
+				address: normalizedAddress,
+				ttl: ttlSeconds,
+				expiresAt,
+			},
+		})
+
 		active.set(normalizedAddress, {
 			ttl: ttlSeconds,
-			expiresAt: now + ttlMs,
-			renewTimer,
+			expiresAt,
+			expiringTimer,
 			expiryTimer,
 		})
 	}
@@ -944,15 +962,18 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 				)
 				break
 
-				case BvlcResultPurpose.FORWARDED_NPDU:
-					if (!this._isForeignDeviceRegistrationActive(remoteAddress)) {
-						return trace(
-							'Received FORWARDED_NPDU without active foreign-device registration -> Drop package',
-						)
-					}
-					// Preserve the IP of the node behind the BBMD so we know where to send
-					// replies back to.
-					header.sender.forwardedFrom = result.originatingIP
+			case BvlcResultPurpose.FORWARDED_NPDU:
+				if (!this._isForeignDeviceRegistrationActive(remoteAddress)) {
+					this.emit('forwardedNpduDroppedNoFdr', {
+						payload: { address: remoteAddress },
+					})
+					return trace(
+						'Received FORWARDED_NPDU without active foreign-device registration -> Drop package',
+					)
+				}
+				// Preserve the IP of the node behind the BBMD so we know where to send
+				// replies back to.
+				header.sender.forwardedFrom = result.originatingIP
 				this._handleNpdu(
 					buffer,
 					result.len,
@@ -2657,7 +2678,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		}
 		if (this._activeForeignDeviceRegistrations?.size) {
 			for (const registration of this._activeForeignDeviceRegistrations.values()) {
-				clearTimeout(registration.renewTimer)
+				clearTimeout(registration.expiringTimer)
 				clearTimeout(registration.expiryTimer)
 			}
 			this._activeForeignDeviceRegistrations.clear()
