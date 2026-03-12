@@ -783,8 +783,11 @@ export interface LogRecord {
 export interface ReadRangeAcknowledge {
 	objectId: BACNetObjectID
 	property: BACNetPropertyID
+	/** BACnet result flags from the ReadRange ACK metadata. */
 	resultFlag: BACNetBitString
+	/** Number of returned items reported by the remote device. */
 	itemCount: number
+	/** Raw item-data payload from the ACK (before typed decoding). */
 	rangeBuffer: Buffer
 	/** Decoded log records when the response was parseable */
 	values?: LogRecord[]

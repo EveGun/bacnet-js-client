@@ -1600,7 +1600,11 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 	}
 
 	/**
-	 * Reads a range of data from a remote device.
+	 * Reads trend-log style data with BACnet `ReadRange`.
+	 *
+	 * The method defaults to `LOG_BUFFER` and `BY_POSITION` to support common
+	 * Trend Log access, and returns both raw ACK data and decoded `LogRecord[]`
+	 * when item-data parsing succeeds.
 	 */
 	async readRange(
 		receiver: BACNetAddress,
