@@ -27,6 +27,20 @@ export default class ReadProperty extends BacnetService {
 		return idx >= 0 && idx < items.length ? items[idx] : undefined
 	}
 
+	private static pickIndexedWeeklyDay(
+		days: unknown[],
+		arrayIndex: number,
+	): unknown[] | undefined {
+		if (days.length === 0) return undefined
+		const allDays = days.every((d) => Array.isArray(d))
+		if (!allDays) return undefined
+		const nonEmptyDays = (days as unknown[][]).filter((d) => d.length > 0)
+		// Many devices return a single indexed day payload encoded as day[0] only.
+		if (nonEmptyDays.length <= 1) return days[0] as unknown[]
+		const idx = arrayIndex - 1
+		return idx >= 0 && idx < days.length ? (days[idx] as unknown[]) : undefined
+	}
+
 	public static encode(
 		buffer: EncodeBuffer,
 		objectType: number,
@@ -245,7 +259,7 @@ export default class ReadProperty extends BacnetService {
 			if (!result || !Array.isArray(result.value)) {
 				return undefined
 			}
-			const selected = ReadProperty.pickIndexedEntry(
+			const selected = ReadProperty.pickIndexedWeeklyDay(
 				result.value as any[],
 				property.index,
 			)

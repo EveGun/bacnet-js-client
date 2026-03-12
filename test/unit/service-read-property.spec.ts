@@ -179,6 +179,40 @@ test.describe('ReadPropertyAcknowledge schedule/calendar compatibility', () => {
 		assert.equal(day[0].value?.value, 22.5)
 	})
 
+	test('should decode indexed weekly schedule day when response carries a single-day payload', () => {
+		const buffer = utils.getBuffer()
+		encodeReadPropertyAckHeader(
+			buffer,
+			ObjectType.SCHEDULE,
+			17,
+			PropertyIdentifier.WEEKLY_SCHEDULE,
+			3,
+		)
+		baAsn1.encodeOpeningTag(buffer, 0)
+		baAsn1.bacappEncodeApplicationData(buffer, {
+			type: ApplicationTag.TIME,
+			value: new Date(2024, 0, 3, 8, 0, 0, 0),
+		})
+		baAsn1.bacappEncodeApplicationData(buffer, {
+			type: ApplicationTag.REAL,
+			value: 23.75,
+		})
+		baAsn1.encodeClosingTag(buffer, 0)
+		baAsn1.encodeClosingTag(buffer, 3)
+
+		const result = ReadProperty.decodeAcknowledge(
+			buffer.buffer,
+			0,
+			buffer.offset,
+		)
+		assert.ok(result)
+		assert.equal(result.property.index, 3)
+		assert.equal(result.values[0].type, ApplicationTag.WEEKLY_SCHEDULE)
+		const day = result.values[0].value as any[]
+		assert.equal(day.length, 1)
+		assert.equal(day[0].value?.value, 23.75)
+	})
+
 	test('should decode exception schedule payload with date and weekday', () => {
 		const buffer = utils.getBuffer()
 		encodeReadPropertyAckHeader(

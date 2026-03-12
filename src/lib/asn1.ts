@@ -1168,8 +1168,11 @@ export const decodeReadAccessResult = (
 				if (!decodedWeekly || !Array.isArray(decodedWeekly.value)) {
 					return undefined
 				}
+				const nonEmptyWeeklyDays = decodedWeekly.value.filter(
+					(day) => Array.isArray(day) && day.length > 0,
+				)
 				const weeklyIdx =
-					decodedWeekly.value.length === 1 ? 0 : newEntry.index - 1
+					nonEmptyWeeklyDays.length <= 1 ? 0 : newEntry.index - 1
 				const selectedWeekly = decodedWeekly.value[weeklyIdx]
 				if (!Array.isArray(selectedWeekly)) return undefined
 				newEntry.value = [
