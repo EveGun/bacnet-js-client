@@ -998,7 +998,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 	/**
 	 * The timeSyncUTC command sets the UTC time of a target device.
 	 */
-	timeSyncUTC(receiver: BACNetAddress, dateTime: Date): void {
+	timeSyncUTC(receiver: BACNetAddress, dateTime: Date | number): void {
 		const buffer = this._getApduBuffer(receiver)
 		baNpdu.encode(buffer, NpduControlPriority.NORMAL_MESSAGE, receiver)
 		baApdu.encodeUnconfirmedServiceRequest(

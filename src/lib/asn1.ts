@@ -529,13 +529,17 @@ export const encodeApplicationDate = (
 
 export const encodeApplicationDateUtc = (
 	buffer: EncodeBuffer,
-	value: Date,
+	value: Date | number,
 ): void => {
-	if (Number.isNaN(value.getTime())) {
+	if (typeof value === 'number' && !Number.isFinite(value)) {
+		throw new Error(`invalid timestamp: ${value}`)
+	}
+	const normalized = typeof value === 'number' ? new Date(value) : value
+	if (Number.isNaN(normalized.getTime())) {
 		throw new Error(`invalid date: ${value}`)
 	}
 	encodeTag(buffer, ApplicationTag.DATE, false, 4)
-	encodeBacnetDateUtc(buffer, value)
+	encodeBacnetDateUtc(buffer, normalized)
 }
 
 const encodeBacnetTime = (buffer: EncodeBuffer, value: Date): void => {
@@ -574,13 +578,17 @@ export const encodeApplicationTime = (
 
 export const encodeApplicationTimeUtc = (
 	buffer: EncodeBuffer,
-	value: Date,
+	value: Date | number,
 ): void => {
-	if (Number.isNaN(value.getTime())) {
+	if (typeof value === 'number' && !Number.isFinite(value)) {
+		throw new Error(`invalid timestamp: ${value}`)
+	}
+	const normalized = typeof value === 'number' ? new Date(value) : value
+	if (Number.isNaN(normalized.getTime())) {
 		throw new Error(`invalid time: ${value}`)
 	}
 	encodeTag(buffer, ApplicationTag.TIME, false, 4)
-	encodeBacnetTimeUtc(buffer, value)
+	encodeBacnetTimeUtc(buffer, normalized)
 }
 
 const bacappEncodeDatetime = (buffer: EncodeBuffer, value: Date): void => {

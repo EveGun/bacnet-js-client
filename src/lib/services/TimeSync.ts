@@ -9,7 +9,7 @@ export default class TimeSync extends BacnetService {
 		baAsn1.encodeApplicationTime(buffer, time)
 	}
 
-	public static encodeUtc(buffer: EncodeBuffer, time: Date) {
+	public static encodeUtc(buffer: EncodeBuffer, time: Date | number) {
 		baAsn1.encodeApplicationDateUtc(buffer, time)
 		baAsn1.encodeApplicationTimeUtc(buffer, time)
 	}
