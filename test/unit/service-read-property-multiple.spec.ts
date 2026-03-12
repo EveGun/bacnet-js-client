@@ -292,7 +292,10 @@ test.describe('ReadPropertyMultipleAcknowledge', () => {
 			buffer.offset,
 		)
 		assert.ok(result)
-		assert.equal(result.values[0].values[0].id, PropertyIdentifier.WEEKLY_SCHEDULE)
+		assert.equal(
+			result.values[0].values[0].id,
+			PropertyIdentifier.WEEKLY_SCHEDULE,
+		)
 		const weekly = result.values[0].values[0].value[0]
 		assert.equal(weekly.type, ApplicationTag.WEEKLY_SCHEDULE)
 		assert.equal((weekly.value as any[]).length, 7)

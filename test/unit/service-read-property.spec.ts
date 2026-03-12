@@ -257,31 +257,26 @@ test.describe('ReadPropertyAcknowledge schedule/calendar compatibility', () => {
 			value: 1,
 		})
 		baAsn1.encodeClosingTag(buffer, 2)
-			baAsn1.bacappEncodeApplicationData(buffer, {
-				type: ApplicationTag.UNSIGNED_INTEGER,
-				value: 5,
-			})
+		baAsn1.bacappEncodeApplicationData(buffer, {
+			type: ApplicationTag.UNSIGNED_INTEGER,
+			value: 5,
+		})
 
-			baAsn1.encodeContextObjectId(
-				buffer,
-				1,
-				ObjectType.CALENDAR,
-				9,
-			)
-			baAsn1.encodeOpeningTag(buffer, 2)
-			baAsn1.bacappEncodeApplicationData(buffer, {
-				type: ApplicationTag.TIME,
-				value: new Date(2024, 0, 2, 15, 45, 0, 0),
-			})
-			baAsn1.bacappEncodeApplicationData(buffer, {
-				type: ApplicationTag.ENUMERATED,
-				value: 3,
-			})
-			baAsn1.encodeClosingTag(buffer, 2)
-			baAsn1.bacappEncodeApplicationData(buffer, {
-				type: ApplicationTag.UNSIGNED_INTEGER,
-				value: 4,
-			})
+		baAsn1.encodeContextObjectId(buffer, 1, ObjectType.CALENDAR, 9)
+		baAsn1.encodeOpeningTag(buffer, 2)
+		baAsn1.bacappEncodeApplicationData(buffer, {
+			type: ApplicationTag.TIME,
+			value: new Date(2024, 0, 2, 15, 45, 0, 0),
+		})
+		baAsn1.bacappEncodeApplicationData(buffer, {
+			type: ApplicationTag.ENUMERATED,
+			value: 3,
+		})
+		baAsn1.encodeClosingTag(buffer, 2)
+		baAsn1.bacappEncodeApplicationData(buffer, {
+			type: ApplicationTag.UNSIGNED_INTEGER,
+			value: 4,
+		})
 
 		baAsn1.encodeClosingTag(buffer, 3)
 
@@ -306,18 +301,17 @@ test.describe('ReadPropertyAcknowledge schedule/calendar compatibility', () => {
 		const weekdayEntry = values.find(
 			(entry) => entry?.date?.type === ApplicationTag.WEEKNDAY,
 		)
-			assert.equal(weekdayEntry.date.value.month, 0xff)
-			assert.equal(weekdayEntry.date.value.week, 2)
-			assert.equal(weekdayEntry.date.value.wday, 1)
-			const calendarReferenceEntry = values.find(
-				(entry) =>
-					entry?.date?.type === ApplicationTag.OBJECTIDENTIFIER,
-			)
-			assert.deepStrictEqual(calendarReferenceEntry?.date?.value, {
-				type: ObjectType.CALENDAR,
-				instance: 9,
-			})
+		assert.equal(weekdayEntry.date.value.month, 0xff)
+		assert.equal(weekdayEntry.date.value.week, 2)
+		assert.equal(weekdayEntry.date.value.wday, 1)
+		const calendarReferenceEntry = values.find(
+			(entry) => entry?.date?.type === ApplicationTag.OBJECTIDENTIFIER,
+		)
+		assert.deepStrictEqual(calendarReferenceEntry?.date?.value, {
+			type: ObjectType.CALENDAR,
+			instance: 9,
 		})
+	})
 
 	test('should decode indexed exception schedule as array payload', () => {
 		const buffer = utils.getBuffer()

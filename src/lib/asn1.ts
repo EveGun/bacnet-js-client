@@ -1217,7 +1217,10 @@ export const decodeReadAccessResult = (
 					apduLen - len,
 					4,
 				)
-				if (!decodedException || !Array.isArray(decodedException.value)) {
+				if (
+					!decodedException ||
+					!Array.isArray(decodedException.value)
+				) {
 					return undefined
 				}
 				const exceptionIdx =

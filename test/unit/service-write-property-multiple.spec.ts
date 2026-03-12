@@ -225,7 +225,9 @@ test.describe('bacnet - Services layer WritePropertyMultiple unit', () => {
 						id: PropertyIdentifier.WEEKLY_SCHEDULE,
 						index: 0,
 					},
-					value: [{ type: ApplicationTag.UNSIGNED_INTEGER, value: 7 }] as any,
+					value: [
+						{ type: ApplicationTag.UNSIGNED_INTEGER, value: 7 },
+					] as any,
 					priority: 0,
 				},
 			],
@@ -237,7 +239,10 @@ test.describe('bacnet - Services layer WritePropertyMultiple unit', () => {
 		)
 		const cleanResult = removeLen(result)
 		assert.equal(cleanResult.values[0].property.index, 0)
-		assert.equal(cleanResult.values[0].value[0].type, ApplicationTag.UNSIGNED_INTEGER)
+		assert.equal(
+			cleanResult.values[0].value[0].type,
+			ApplicationTag.UNSIGNED_INTEGER,
+		)
 		assert.equal(cleanResult.values[0].value[0].value, 7)
 	})
 
@@ -294,10 +299,19 @@ test.describe('bacnet - Services layer WritePropertyMultiple unit', () => {
 				{ type: ObjectType.SCHEDULE, instance: 1 },
 				[
 					{
-						property: { id: PropertyIdentifier.EFFECTIVE_PERIOD, index: 1 },
+						property: {
+							id: PropertyIdentifier.EFFECTIVE_PERIOD,
+							index: 1,
+						},
 						value: [
-							{ type: ApplicationTag.DATE, value: new Date(2024, 0, 1) },
-							{ type: ApplicationTag.DATE, value: new Date(2024, 11, 31) },
+							{
+								type: ApplicationTag.DATE,
+								value: new Date(2024, 0, 1),
+							},
+							{
+								type: ApplicationTag.DATE,
+								value: new Date(2024, 11, 31),
+							},
 						] as any,
 						priority: 0,
 					},
@@ -314,9 +328,15 @@ test.describe('bacnet - Services layer WritePropertyMultiple unit', () => {
 				{ type: ObjectType.CALENDAR, instance: 1 },
 				[
 					{
-						property: { id: PropertyIdentifier.DATE_LIST, index: 1 },
+						property: {
+							id: PropertyIdentifier.DATE_LIST,
+							index: 1,
+						},
 						value: [
-							{ type: ApplicationTag.DATE, value: new Date(2025, 7, 22) },
+							{
+								type: ApplicationTag.DATE,
+								value: new Date(2025, 7, 22),
+							},
 						] as any,
 						priority: 0,
 					},
@@ -329,7 +349,11 @@ test.describe('bacnet - Services layer WritePropertyMultiple unit', () => {
 		const buffer = utils.getBuffer()
 		baAsn1.encodeContextObjectId(buffer, 0, ObjectType.SCHEDULE, 1)
 		baAsn1.encodeOpeningTag(buffer, 1)
-		baAsn1.encodeContextEnumerated(buffer, 0, PropertyIdentifier.EFFECTIVE_PERIOD)
+		baAsn1.encodeContextEnumerated(
+			buffer,
+			0,
+			PropertyIdentifier.EFFECTIVE_PERIOD,
+		)
 		baAsn1.encodeContextUnsigned(buffer, 1, 1)
 		baAsn1.encodeOpeningTag(buffer, 2)
 		baAsn1.bacappEncodeApplicationData(buffer, {
@@ -343,7 +367,11 @@ test.describe('bacnet - Services layer WritePropertyMultiple unit', () => {
 		baAsn1.encodeClosingTag(buffer, 2)
 		baAsn1.encodeClosingTag(buffer, 1)
 
-		const result = WritePropertyMultiple.decode(buffer.buffer, 0, buffer.offset)
+		const result = WritePropertyMultiple.decode(
+			buffer.buffer,
+			0,
+			buffer.offset,
+		)
 		assert.equal(result, undefined)
 	})
 
@@ -362,7 +390,11 @@ test.describe('bacnet - Services layer WritePropertyMultiple unit', () => {
 		baAsn1.encodeClosingTag(buffer, 2)
 		baAsn1.encodeClosingTag(buffer, 1)
 
-		const result = WritePropertyMultiple.decode(buffer.buffer, 0, buffer.offset)
+		const result = WritePropertyMultiple.decode(
+			buffer.buffer,
+			0,
+			buffer.offset,
+		)
 		assert.equal(result, undefined)
 	})
 })

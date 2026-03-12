@@ -67,7 +67,10 @@ client.on('error', (err: Error) => {
 })
 
 void main().catch((err) => {
-	console.error('[FATAL]', err instanceof Error ? err.stack || err.message : err)
+	console.error(
+		'[FATAL]',
+		err instanceof Error ? err.stack || err.message : err,
+	)
 	client.close()
 	process.exitCode = 1
 })
@@ -79,8 +82,14 @@ async function main() {
 	const context: StepContext = {
 		client,
 		address,
-		scheduleObject: { type: ObjectType.SCHEDULE, instance: config.scheduleInstance },
-		calendarObject: { type: ObjectType.CALENDAR, instance: config.calendarInstance },
+		scheduleObject: {
+			type: ObjectType.SCHEDULE,
+			instance: config.scheduleInstance,
+		},
+		calendarObject: {
+			type: ObjectType.CALENDAR,
+			instance: config.calendarInstance,
+		},
 		config,
 		valueTag: ApplicationTag.UNSIGNED_INTEGER,
 	}
@@ -89,24 +98,168 @@ async function main() {
 	console.log(`[INFO] valueTag=${context.valueTag}`)
 
 	const allSteps: Array<{ id: number; run: () => Promise<StepResult> }> = [
-		{ id: 1, run: () => runStep('1) WP full write + RP verify (WEEKLY_SCHEDULE)', context, stepWeeklyWpRp) },
-		{ id: 2, run: () => runStep('2) WPM full write + RPM verify (WEEKLY_SCHEDULE)', context, stepWeeklyWpmRpm) },
-		{ id: 3, run: () => runStep('3) WP indexed day write + RP indexed read (WEEKLY_SCHEDULE)', context, stepWeeklyIndexedWpRp) },
-		{ id: 4, run: () => runStep('4) WPM indexed day write + RPM indexed read (WEEKLY_SCHEDULE)', context, stepWeeklyIndexedWpmRpm) },
-		{ id: 5, run: () => runStep('5) WP array size write + RP read size (WEEKLY_SCHEDULE)', context, stepWeeklySizeWpRp) },
-		{ id: 6, run: () => runStep('6) WPM array size write + RPM read size (WEEKLY_SCHEDULE)', context, stepWeeklySizeWpmRpm) },
-		{ id: 7, run: () => runStep('7) WP full write + RP verify (EXCEPTION_SCHEDULE)', context, stepExceptionWpRp) },
-		{ id: 8, run: () => runStep('8) WPM full write + RPM verify (EXCEPTION_SCHEDULE)', context, stepExceptionWpmRpm) },
-		{ id: 9, run: () => runStep('9) WP indexed exception write + RP indexed read', context, stepExceptionIndexedWpRp) },
-		{ id: 10, run: () => runStep('10) WPM indexed exception write + RPM indexed read', context, stepExceptionIndexedWpmRpm) },
-		{ id: 11, run: () => runStep('11) Calendar reference in exception schedule', context, stepCalendarReference) },
-		{ id: 12, run: () => runStep('12) DATE_LIST write/read via WP/RP', context, stepDateListWpRp) },
-		{ id: 13, run: () => runStep('13) DATE_LIST write/read via WPM/RPM', context, stepDateListWpmRpm) },
-		{ id: 14, run: () => runStep('14) EFFECTIVE_PERIOD write/read via WP/RP', context, stepEffectivePeriodWpRp) },
-		{ id: 15, run: () => runStep('15) EFFECTIVE_PERIOD write/read via WPM/RPM', context, stepEffectivePeriodWpmRpm) },
-		{ id: 16, run: () => runStep('16) Negative compliance checks', context, stepNegativeCompliance) },
-		{ id: 17, run: () => runStep('17) Consistency check RP vs RPM', context, stepConsistencyRpVsRpm) },
-		{ id: 18, run: () => runStep('18) Consistency check WP vs WPM', context, stepConsistencyWpVsWpm) },
+		{
+			id: 1,
+			run: () =>
+				runStep(
+					'1) WP full write + RP verify (WEEKLY_SCHEDULE)',
+					context,
+					stepWeeklyWpRp,
+				),
+		},
+		{
+			id: 2,
+			run: () =>
+				runStep(
+					'2) WPM full write + RPM verify (WEEKLY_SCHEDULE)',
+					context,
+					stepWeeklyWpmRpm,
+				),
+		},
+		{
+			id: 3,
+			run: () =>
+				runStep(
+					'3) WP indexed day write + RP indexed read (WEEKLY_SCHEDULE)',
+					context,
+					stepWeeklyIndexedWpRp,
+				),
+		},
+		{
+			id: 4,
+			run: () =>
+				runStep(
+					'4) WPM indexed day write + RPM indexed read (WEEKLY_SCHEDULE)',
+					context,
+					stepWeeklyIndexedWpmRpm,
+				),
+		},
+		{
+			id: 5,
+			run: () =>
+				runStep(
+					'5) WP array size write + RP read size (WEEKLY_SCHEDULE)',
+					context,
+					stepWeeklySizeWpRp,
+				),
+		},
+		{
+			id: 6,
+			run: () =>
+				runStep(
+					'6) WPM array size write + RPM read size (WEEKLY_SCHEDULE)',
+					context,
+					stepWeeklySizeWpmRpm,
+				),
+		},
+		{
+			id: 7,
+			run: () =>
+				runStep(
+					'7) WP full write + RP verify (EXCEPTION_SCHEDULE)',
+					context,
+					stepExceptionWpRp,
+				),
+		},
+		{
+			id: 8,
+			run: () =>
+				runStep(
+					'8) WPM full write + RPM verify (EXCEPTION_SCHEDULE)',
+					context,
+					stepExceptionWpmRpm,
+				),
+		},
+		{
+			id: 9,
+			run: () =>
+				runStep(
+					'9) WP indexed exception write + RP indexed read',
+					context,
+					stepExceptionIndexedWpRp,
+				),
+		},
+		{
+			id: 10,
+			run: () =>
+				runStep(
+					'10) WPM indexed exception write + RPM indexed read',
+					context,
+					stepExceptionIndexedWpmRpm,
+				),
+		},
+		{
+			id: 11,
+			run: () =>
+				runStep(
+					'11) Calendar reference in exception schedule',
+					context,
+					stepCalendarReference,
+				),
+		},
+		{
+			id: 12,
+			run: () =>
+				runStep(
+					'12) DATE_LIST write/read via WP/RP',
+					context,
+					stepDateListWpRp,
+				),
+		},
+		{
+			id: 13,
+			run: () =>
+				runStep(
+					'13) DATE_LIST write/read via WPM/RPM',
+					context,
+					stepDateListWpmRpm,
+				),
+		},
+		{
+			id: 14,
+			run: () =>
+				runStep(
+					'14) EFFECTIVE_PERIOD write/read via WP/RP',
+					context,
+					stepEffectivePeriodWpRp,
+				),
+		},
+		{
+			id: 15,
+			run: () =>
+				runStep(
+					'15) EFFECTIVE_PERIOD write/read via WPM/RPM',
+					context,
+					stepEffectivePeriodWpmRpm,
+				),
+		},
+		{
+			id: 16,
+			run: () =>
+				runStep(
+					'16) Negative compliance checks',
+					context,
+					stepNegativeCompliance,
+				),
+		},
+		{
+			id: 17,
+			run: () =>
+				runStep(
+					'17) Consistency check RP vs RPM',
+					context,
+					stepConsistencyRpVsRpm,
+				),
+		},
+		{
+			id: 18,
+			run: () =>
+				runStep(
+					'18) Consistency check WP vs WPM',
+					context,
+					stepConsistencyWpVsWpm,
+				),
+		},
 	]
 
 	const steps = config.selectedSteps
@@ -166,7 +319,11 @@ async function runStep(
 	}
 }
 
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+function withTimeout<T>(
+	promise: Promise<T>,
+	timeoutMs: number,
+	message: string,
+): Promise<T> {
 	let timer: NodeJS.Timeout | undefined
 	const timeout = new Promise<T>((_, reject) => {
 		timer = setTimeout(() => reject(new Error(message)), timeoutMs)
@@ -194,17 +351,23 @@ function parseArgs(args: string[]): Map<string, string> {
 			positional.push(token)
 		}
 	}
-	if (positional[0] && !map.has('targetAddress')) map.set('targetAddress', positional[0])
-	if (positional[1] && !map.has('scheduleInstance')) map.set('scheduleInstance', positional[1])
-	if (positional[2] && !map.has('calendarInstance')) map.set('calendarInstance', positional[2])
-	if (positional[3] && !map.has('localPort')) map.set('localPort', positional[3])
+	if (positional[0] && !map.has('targetAddress'))
+		map.set('targetAddress', positional[0])
+	if (positional[1] && !map.has('scheduleInstance'))
+		map.set('scheduleInstance', positional[1])
+	if (positional[2] && !map.has('calendarInstance'))
+		map.set('calendarInstance', positional[2])
+	if (positional[3] && !map.has('localPort'))
+		map.set('localPort', positional[3])
 	return map
 }
 
 function buildConfig(argValues: Map<string, string>): CliConfig {
-	const mode = ((argValues.get('mode') || 'full').toLowerCase() === 'smoke'
-		? 'smoke'
-		: 'full') as Mode
+	const mode = (
+		(argValues.get('mode') || 'full').toLowerCase() === 'smoke'
+			? 'smoke'
+			: 'full'
+	) as Mode
 
 	const providedExceptionCount = argValues.get('exceptionCount')
 	const providedTuples = argValues.get('tuplesPerException')
@@ -226,7 +389,9 @@ function buildConfig(argValues: Map<string, string>): CliConfig {
 		weeklyRowsPerDay: parseNumber(providedWeeklyRows, defaultWeeklyRows),
 		mode,
 		timeoutMs: parseNumber(argValues.get('timeoutMs'), defaultTimeout),
-		localPort: localPortValue ? parseNumber(localPortValue, NaN) : undefined,
+		localPort: localPortValue
+			? parseNumber(localPortValue, NaN)
+			: undefined,
 		selectedSteps: parseSteps(argValues.get('steps')),
 	}
 }
@@ -247,15 +412,24 @@ function parseSteps(value: string | undefined): Set<number> | null {
 }
 
 function smallWeeklyRows(config: CliConfig): number {
-	return Math.max(1, Math.min(config.weeklyRowsPerDay, config.mode === 'smoke' ? 4 : 8))
+	return Math.max(
+		1,
+		Math.min(config.weeklyRowsPerDay, config.mode === 'smoke' ? 4 : 8),
+	)
 }
 
 function smallExceptionCount(config: CliConfig): number {
-	return Math.max(1, Math.min(config.exceptionCount, config.mode === 'smoke' ? 4 : 8))
+	return Math.max(
+		1,
+		Math.min(config.exceptionCount, config.mode === 'smoke' ? 4 : 8),
+	)
 }
 
 function smallTupleCount(config: CliConfig): number {
-	return Math.max(1, Math.min(config.tuplesPerException, config.mode === 'smoke' ? 3 : 4))
+	return Math.max(
+		1,
+		Math.min(config.tuplesPerException, config.mode === 'smoke' ? 3 : 4),
+	)
 }
 
 async function inferValueTag(context: StepContext): Promise<number> {
@@ -303,7 +477,10 @@ function buildAppValue(tag: number, seed: number): BACNetAppData {
 	}
 }
 
-function buildWeeklySchedule(rowsPerDay: number, valueTag: number): BACNetWeeklySchedulePayload {
+function buildWeeklySchedule(
+	rowsPerDay: number,
+	valueTag: number,
+): BACNetWeeklySchedulePayload {
 	const weekly: BACNetWeeklySchedulePayload = []
 	for (let day = 0; day < 7; day++) {
 		const rows: BACNetTimeValueEntry[] = []
@@ -311,7 +488,15 @@ function buildWeeklySchedule(rowsPerDay: number, valueTag: number): BACNetWeekly
 			rows.push({
 				time: {
 					type: ApplicationTag.TIME,
-					value: new Date(2024, 0, 1 + day, Math.floor(row / 2), (row % 2) * 30, 0, 0),
+					value: new Date(
+						2024,
+						0,
+						1 + day,
+						Math.floor(row / 2),
+						(row % 2) * 30,
+						0,
+						0,
+					),
 				},
 				value: buildAppValue(valueTag, day * 1000 + row),
 			})
@@ -334,19 +519,29 @@ function buildExceptionSchedule(
 				? {
 						type: ApplicationTag.DATE,
 						value: new Date(2026, i % 12, (i % 27) + 1),
-				  }
+					}
 				: dateKind === 1
 					? {
 							type: ApplicationTag.DATERANGE,
 							value: [
-								{ type: ApplicationTag.DATE, value: new Date(2026, i % 12, 1) },
-								{ type: ApplicationTag.DATE, value: new Date(2026, i % 12, 15) },
+								{
+									type: ApplicationTag.DATE,
+									value: new Date(2026, i % 12, 1),
+								},
+								{
+									type: ApplicationTag.DATE,
+									value: new Date(2026, i % 12, 15),
+								},
 							],
-					  }
+						}
 					: {
 							type: ApplicationTag.WEEKNDAY,
-							value: { month: ((i % 12) + 1) as number, week: ((i % 4) + 1) as number, wday: ((i % 7) + 1) as number },
-					  }
+							value: {
+								month: ((i % 12) + 1) as number,
+								week: ((i % 4) + 1) as number,
+								wday: ((i % 7) + 1) as number,
+							},
+						}
 
 		const events: BACNetTimeValueEntry[] = []
 		for (let t = 0; t < tuplesPerEntry; t++) {
@@ -362,7 +557,10 @@ function buildExceptionSchedule(
 		entries.push({
 			date,
 			events,
-			priority: { type: ApplicationTag.UNSIGNED_INTEGER, value: (i % 16) + 1 },
+			priority: {
+				type: ApplicationTag.UNSIGNED_INTEGER,
+				value: (i % 16) + 1,
+			},
 		})
 	}
 	return entries
@@ -409,7 +607,10 @@ function buildDateList(): BACNetCalendarDateListPayload {
 				{ type: ApplicationTag.DATE, value: new Date(2026, 1, 15) },
 			],
 		},
-		{ type: ApplicationTag.WEEKNDAY, value: { month: 4, week: 2, wday: 2 } },
+		{
+			type: ApplicationTag.WEEKNDAY,
+			value: { month: 4, week: 2, wday: 2 },
+		},
 	]
 }
 
@@ -427,10 +628,16 @@ async function writeViaWp(
 	value: unknown,
 	arrayIndex: number = ASN1_ARRAY_ALL,
 ) {
-	await context.client.writeProperty(context.address, objectId, propertyId, value as never, {
-		arrayIndex,
-		priority: ASN1_NO_PRIORITY,
-	})
+	await context.client.writeProperty(
+		context.address,
+		objectId,
+		propertyId,
+		value as never,
+		{
+			arrayIndex,
+			priority: ASN1_NO_PRIORITY,
+		},
+	)
 }
 
 async function writeViaWpm(
@@ -461,9 +668,14 @@ async function readViaRp(
 	propertyId: number,
 	arrayIndex: number = ASN1_ARRAY_ALL,
 ): Promise<BACNetAppData> {
-	const response = await context.client.readProperty(context.address, objectId, propertyId, {
-		arrayIndex,
-	})
+	const response = await context.client.readProperty(
+		context.address,
+		objectId,
+		propertyId,
+		{
+			arrayIndex,
+		},
+	)
 	const value = response.values[0]
 	if (!value) throw new Error('RP decode returned no values')
 	return value
@@ -485,7 +697,9 @@ async function readViaRpm(
 		],
 		{},
 	)
-	const propertyResult = response.values?.[0]?.values?.[0] as ReadAccessProperty | undefined
+	const propertyResult = response.values?.[0]?.values?.[0] as
+		| ReadAccessProperty
+		| undefined
 	if (!propertyResult || !propertyResult.value?.[0]) {
 		throw new Error('RPM decode returned no property value')
 	}
@@ -496,7 +710,10 @@ async function writeIndexedWeeklyLarge(
 	context: StepContext,
 	mode: 'wp' | 'wpm',
 ): Promise<void> {
-	const weekly = buildWeeklySchedule(context.config.weeklyRowsPerDay, context.valueTag)
+	const weekly = buildWeeklySchedule(
+		context.config.weeklyRowsPerDay,
+		context.valueTag,
+	)
 	const writer = mode === 'wp' ? writeViaWp : writeViaWpm
 	await writer(
 		context,
@@ -545,27 +762,41 @@ async function writeIndexedExceptionLarge(
 }
 
 function extractWeeklyEntries(value: BACNetAppData): BACNetTimeValueEntry[][] {
-	assertTrue(value.type === ApplicationTag.WEEKLY_SCHEDULE, `Expected WEEKLY_SCHEDULE, got type=${value.type}`)
+	assertTrue(
+		value.type === ApplicationTag.WEEKLY_SCHEDULE,
+		`Expected WEEKLY_SCHEDULE, got type=${value.type}`,
+	)
 	return value.value as BACNetTimeValueEntry[][]
 }
 
-function unwrapIndexedWeeklyRows(weekly: BACNetTimeValueEntry[][]): BACNetTimeValueEntry[] {
+function unwrapIndexedWeeklyRows(
+	weekly: BACNetTimeValueEntry[][],
+): BACNetTimeValueEntry[] {
 	if (weekly.length === 1 && Array.isArray(weekly[0])) return weekly[0]
 	return weekly as unknown as BACNetTimeValueEntry[]
 }
 
 function extractExceptionEntries(value: BACNetAppData): any[] {
-	assertTrue(value.type === ApplicationTag.SPECIAL_EVENT, `Expected SPECIAL_EVENT, got type=${value.type}`)
+	assertTrue(
+		value.type === ApplicationTag.SPECIAL_EVENT,
+		`Expected SPECIAL_EVENT, got type=${value.type}`,
+	)
 	return value.value as any[]
 }
 
 function extractDateListEntries(value: BACNetAppData): any[] {
-	assertTrue(value.type === ApplicationTag.CALENDAR_ENTRY, `Expected CALENDAR_ENTRY, got type=${value.type}`)
+	assertTrue(
+		value.type === ApplicationTag.CALENDAR_ENTRY,
+		`Expected CALENDAR_ENTRY, got type=${value.type}`,
+	)
 	return value.value as any[]
 }
 
 function extractEffectivePeriod(value: BACNetAppData): any[] {
-	assertTrue(value.type === ApplicationTag.DATERANGE, `Expected DATERANGE, got type=${value.type}`)
+	assertTrue(
+		value.type === ApplicationTag.DATERANGE,
+		`Expected DATERANGE, got type=${value.type}`,
+	)
 	return value.value as any[]
 }
 
@@ -575,7 +806,9 @@ function assertTrue(condition: boolean, message: string) {
 
 function assertEqual(actual: unknown, expected: unknown, message: string) {
 	if (actual !== expected) {
-		throw new Error(`${message}. expected=${String(expected)} actual=${String(actual)}`)
+		throw new Error(
+			`${message}. expected=${String(expected)} actual=${String(actual)}`,
+		)
 	}
 }
 
@@ -627,8 +860,17 @@ async function expectFailure(label: string, fn: () => Promise<unknown>) {
 async function stepWeeklyWpRp(context: StepContext): Promise<string> {
 	const rowsPerDay = smallWeeklyRows(context.config)
 	const weekly = buildWeeklySchedule(rowsPerDay, context.valueTag)
-	await writeViaWp(context, context.scheduleObject, PropertyIdentifier.WEEKLY_SCHEDULE, weekly)
-	const readBack = await readViaRp(context, context.scheduleObject, PropertyIdentifier.WEEKLY_SCHEDULE)
+	await writeViaWp(
+		context,
+		context.scheduleObject,
+		PropertyIdentifier.WEEKLY_SCHEDULE,
+		weekly,
+	)
+	const readBack = await readViaRp(
+		context,
+		context.scheduleObject,
+		PropertyIdentifier.WEEKLY_SCHEDULE,
+	)
 	const days = extractWeeklyEntries(readBack)
 	assertEqual(days.length, 7, 'Weekly schedule day count mismatch')
 	for (let i = 0; i < 7; i++) {
@@ -647,8 +889,17 @@ async function stepWeeklyWpRp(context: StepContext): Promise<string> {
 async function stepWeeklyWpmRpm(context: StepContext): Promise<string> {
 	const rowsPerDay = smallWeeklyRows(context.config)
 	const weekly = buildWeeklySchedule(rowsPerDay, context.valueTag)
-	await writeViaWpm(context, context.scheduleObject, PropertyIdentifier.WEEKLY_SCHEDULE, weekly)
-	const readBack = await readViaRpm(context, context.scheduleObject, PropertyIdentifier.WEEKLY_SCHEDULE)
+	await writeViaWpm(
+		context,
+		context.scheduleObject,
+		PropertyIdentifier.WEEKLY_SCHEDULE,
+		weekly,
+	)
+	const readBack = await readViaRpm(
+		context,
+		context.scheduleObject,
+		PropertyIdentifier.WEEKLY_SCHEDULE,
+	)
 	const days = extractWeeklyEntries(readBack)
 	assertEqual(days.length, 7, 'Weekly schedule day count mismatch')
 	assertEqual(days[0].length, rowsPerDay, 'Day 0 row count mismatch')
@@ -673,7 +924,11 @@ async function stepWeeklyIndexedWpRp(context: StepContext): Promise<string> {
 		dayIndex,
 	)
 	const rows = unwrapIndexedWeeklyRows(extractWeeklyEntries(readBack))
-	assertEqual(rows.length, context.config.weeklyRowsPerDay, 'Indexed day row count mismatch')
+	assertEqual(
+		rows.length,
+		context.config.weeklyRowsPerDay,
+		'Indexed day row count mismatch',
+	)
 	await assertRpRpmConsistency(
 		context,
 		context.scheduleObject,
@@ -694,7 +949,11 @@ async function stepWeeklyIndexedWpmRpm(context: StepContext): Promise<string> {
 		dayIndex,
 	)
 	const rows = unwrapIndexedWeeklyRows(extractWeeklyEntries(readBack))
-	assertEqual(rows.length, context.config.weeklyRowsPerDay, 'Indexed day row count mismatch')
+	assertEqual(
+		rows.length,
+		context.config.weeklyRowsPerDay,
+		'Indexed day row count mismatch',
+	)
 	await assertRpRpmConsistency(
 		context,
 		context.scheduleObject,
@@ -720,7 +979,11 @@ async function stepWeeklySizeWpRp(context: StepContext): Promise<string> {
 		PropertyIdentifier.WEEKLY_SCHEDULE,
 		0,
 	)
-	assertEqual(readBack.type, ApplicationTag.UNSIGNED_INTEGER, 'Expected UNSIGNED_INTEGER for array size')
+	assertEqual(
+		readBack.type,
+		ApplicationTag.UNSIGNED_INTEGER,
+		'Expected UNSIGNED_INTEGER for array size',
+	)
 	assertEqual(readBack.value, expected, 'Weekly size mismatch')
 	await assertRpRpmConsistency(
 		context,
@@ -747,7 +1010,11 @@ async function stepWeeklySizeWpmRpm(context: StepContext): Promise<string> {
 		PropertyIdentifier.WEEKLY_SCHEDULE,
 		0,
 	)
-	assertEqual(readBack.type, ApplicationTag.UNSIGNED_INTEGER, 'Expected UNSIGNED_INTEGER for array size')
+	assertEqual(
+		readBack.type,
+		ApplicationTag.UNSIGNED_INTEGER,
+		'Expected UNSIGNED_INTEGER for array size',
+	)
 	assertEqual(readBack.value, expected, 'Weekly size mismatch')
 	await assertRpRpmConsistency(
 		context,
@@ -767,11 +1034,24 @@ async function stepExceptionWpRp(context: StepContext): Promise<string> {
 		tupleCount,
 		context.valueTag,
 	)
-	await writeViaWp(context, context.scheduleObject, PropertyIdentifier.EXCEPTION_SCHEDULE, exceptions)
-	const readBack = await readViaRp(context, context.scheduleObject, PropertyIdentifier.EXCEPTION_SCHEDULE)
+	await writeViaWp(
+		context,
+		context.scheduleObject,
+		PropertyIdentifier.EXCEPTION_SCHEDULE,
+		exceptions,
+	)
+	const readBack = await readViaRp(
+		context,
+		context.scheduleObject,
+		PropertyIdentifier.EXCEPTION_SCHEDULE,
+	)
 	const entries = extractExceptionEntries(readBack)
 	assertEqual(entries.length, entryCount, 'Exception entry count mismatch')
-	assertEqual(entries[0]?.events?.length, tupleCount, 'Tuple count mismatch on first entry')
+	assertEqual(
+		entries[0]?.events?.length,
+		tupleCount,
+		'Tuple count mismatch on first entry',
+	)
 	assertEqual(
 		entries[entries.length - 1]?.events?.length,
 		tupleCount,
@@ -795,11 +1075,24 @@ async function stepExceptionWpmRpm(context: StepContext): Promise<string> {
 		tupleCount,
 		context.valueTag,
 	)
-	await writeViaWpm(context, context.scheduleObject, PropertyIdentifier.EXCEPTION_SCHEDULE, exceptions)
-	const readBack = await readViaRpm(context, context.scheduleObject, PropertyIdentifier.EXCEPTION_SCHEDULE)
+	await writeViaWpm(
+		context,
+		context.scheduleObject,
+		PropertyIdentifier.EXCEPTION_SCHEDULE,
+		exceptions,
+	)
+	const readBack = await readViaRpm(
+		context,
+		context.scheduleObject,
+		PropertyIdentifier.EXCEPTION_SCHEDULE,
+	)
 	const entries = extractExceptionEntries(readBack)
 	assertEqual(entries.length, entryCount, 'Exception entry count mismatch')
-	assertEqual(entries[0]?.events?.length, tupleCount, 'Tuple count mismatch on first entry')
+	assertEqual(
+		entries[0]?.events?.length,
+		tupleCount,
+		'Tuple count mismatch on first entry',
+	)
 	await assertRpRpmConsistency(
 		context,
 		context.scheduleObject,
@@ -821,8 +1114,16 @@ async function stepExceptionIndexedWpRp(context: StepContext): Promise<string> {
 	)
 	const entries = extractExceptionEntries(readBack)
 	assertEqual(entries.length, 1, 'Indexed exception should return one entry')
-	assertEqual(entries[0]?.events?.length, context.config.tuplesPerException, 'Indexed tuple count mismatch')
-	assertEqual(entries[0]?.priority?.value, index, 'Indexed exception priority mismatch')
+	assertEqual(
+		entries[0]?.events?.length,
+		context.config.tuplesPerException,
+		'Indexed tuple count mismatch',
+	)
+	assertEqual(
+		entries[0]?.priority?.value,
+		index,
+		'Indexed exception priority mismatch',
+	)
 	await assertRpRpmConsistency(
 		context,
 		context.scheduleObject,
@@ -833,7 +1134,9 @@ async function stepExceptionIndexedWpRp(context: StepContext): Promise<string> {
 	return `mode=indexed-large index=${index} tuples=${entries[0]?.events?.length || 0}`
 }
 
-async function stepExceptionIndexedWpmRpm(context: StepContext): Promise<string> {
+async function stepExceptionIndexedWpmRpm(
+	context: StepContext,
+): Promise<string> {
 	await writeIndexedExceptionLarge(context, 'wpm')
 	const index = Math.max(1, Math.min(3, context.config.exceptionCount))
 	const readBack = await readViaRpm(
@@ -844,8 +1147,16 @@ async function stepExceptionIndexedWpmRpm(context: StepContext): Promise<string>
 	)
 	const entries = extractExceptionEntries(readBack)
 	assertEqual(entries.length, 1, 'Indexed exception should return one entry')
-	assertEqual(entries[0]?.events?.length, context.config.tuplesPerException, 'Indexed tuple count mismatch')
-	assertEqual(entries[0]?.priority?.value, index, 'Indexed exception priority mismatch')
+	assertEqual(
+		entries[0]?.events?.length,
+		context.config.tuplesPerException,
+		'Indexed tuple count mismatch',
+	)
+	assertEqual(
+		entries[0]?.priority?.value,
+		index,
+		'Indexed exception priority mismatch',
+	)
 	await assertRpRpmConsistency(
 		context,
 		context.scheduleObject,
@@ -862,16 +1173,32 @@ async function stepCalendarReference(context: StepContext): Promise<string> {
 		Math.max(1, Math.min(context.config.tuplesPerException, 4)),
 		context.valueTag,
 	)
-	await writeViaWp(context, context.scheduleObject, PropertyIdentifier.EXCEPTION_SCHEDULE, payload)
-	const readBack = await readViaRp(context, context.scheduleObject, PropertyIdentifier.EXCEPTION_SCHEDULE)
+	await writeViaWp(
+		context,
+		context.scheduleObject,
+		PropertyIdentifier.EXCEPTION_SCHEDULE,
+		payload,
+	)
+	const readBack = await readViaRp(
+		context,
+		context.scheduleObject,
+		PropertyIdentifier.EXCEPTION_SCHEDULE,
+	)
 	const entries = extractExceptionEntries(readBack)
 	const calendarRef = entries.find(
 		(entry) =>
 			entry?.date?.type === ApplicationTag.OBJECTIDENTIFIER &&
 			entry?.date?.value?.type === ObjectType.CALENDAR,
 	)
-	assertTrue(Boolean(calendarRef), 'Expected calendar reference entry in exception schedule')
-	assertEqual(calendarRef.date.value.instance, context.calendarObject.instance, 'Calendar reference instance mismatch')
+	assertTrue(
+		Boolean(calendarRef),
+		'Expected calendar reference entry in exception schedule',
+	)
+	assertEqual(
+		calendarRef.date.value.instance,
+		context.calendarObject.instance,
+		'Calendar reference instance mismatch',
+	)
 	await assertRpRpmConsistency(
 		context,
 		context.scheduleObject,
@@ -884,8 +1211,17 @@ async function stepCalendarReference(context: StepContext): Promise<string> {
 
 async function stepDateListWpRp(context: StepContext): Promise<string> {
 	const dateList = buildDateList()
-	await writeViaWp(context, context.calendarObject, PropertyIdentifier.DATE_LIST, dateList)
-	const readBack = await readViaRp(context, context.calendarObject, PropertyIdentifier.DATE_LIST)
+	await writeViaWp(
+		context,
+		context.calendarObject,
+		PropertyIdentifier.DATE_LIST,
+		dateList,
+	)
+	const readBack = await readViaRp(
+		context,
+		context.calendarObject,
+		PropertyIdentifier.DATE_LIST,
+	)
 	const entries = extractDateListEntries(readBack)
 	assertTrue(entries.length >= 3, 'Expected at least 3 date-list entries')
 	await assertRpRpmConsistency(
@@ -900,8 +1236,17 @@ async function stepDateListWpRp(context: StepContext): Promise<string> {
 
 async function stepDateListWpmRpm(context: StepContext): Promise<string> {
 	const dateList = buildDateList()
-	await writeViaWpm(context, context.calendarObject, PropertyIdentifier.DATE_LIST, dateList)
-	const readBack = await readViaRpm(context, context.calendarObject, PropertyIdentifier.DATE_LIST)
+	await writeViaWpm(
+		context,
+		context.calendarObject,
+		PropertyIdentifier.DATE_LIST,
+		dateList,
+	)
+	const readBack = await readViaRpm(
+		context,
+		context.calendarObject,
+		PropertyIdentifier.DATE_LIST,
+	)
 	const entries = extractDateListEntries(readBack)
 	assertTrue(entries.length >= 3, 'Expected at least 3 date-list entries')
 	await assertRpRpmConsistency(
@@ -916,10 +1261,23 @@ async function stepDateListWpmRpm(context: StepContext): Promise<string> {
 
 async function stepEffectivePeriodWpRp(context: StepContext): Promise<string> {
 	const period = buildEffectivePeriod()
-	await writeViaWp(context, context.scheduleObject, PropertyIdentifier.EFFECTIVE_PERIOD, period)
-	const readBack = await readViaRp(context, context.scheduleObject, PropertyIdentifier.EFFECTIVE_PERIOD)
+	await writeViaWp(
+		context,
+		context.scheduleObject,
+		PropertyIdentifier.EFFECTIVE_PERIOD,
+		period,
+	)
+	const readBack = await readViaRp(
+		context,
+		context.scheduleObject,
+		PropertyIdentifier.EFFECTIVE_PERIOD,
+	)
 	const parsed = extractEffectivePeriod(readBack)
-	assertEqual(parsed.length, 2, 'Effective period should contain exactly 2 dates')
+	assertEqual(
+		parsed.length,
+		2,
+		'Effective period should contain exactly 2 dates',
+	)
 	await assertRpRpmConsistency(
 		context,
 		context.scheduleObject,
@@ -930,12 +1288,27 @@ async function stepEffectivePeriodWpRp(context: StepContext): Promise<string> {
 	return `periodEntries=${parsed.length}`
 }
 
-async function stepEffectivePeriodWpmRpm(context: StepContext): Promise<string> {
+async function stepEffectivePeriodWpmRpm(
+	context: StepContext,
+): Promise<string> {
 	const period = buildEffectivePeriod()
-	await writeViaWpm(context, context.scheduleObject, PropertyIdentifier.EFFECTIVE_PERIOD, period)
-	const readBack = await readViaRpm(context, context.scheduleObject, PropertyIdentifier.EFFECTIVE_PERIOD)
+	await writeViaWpm(
+		context,
+		context.scheduleObject,
+		PropertyIdentifier.EFFECTIVE_PERIOD,
+		period,
+	)
+	const readBack = await readViaRpm(
+		context,
+		context.scheduleObject,
+		PropertyIdentifier.EFFECTIVE_PERIOD,
+	)
 	const parsed = extractEffectivePeriod(readBack)
-	assertEqual(parsed.length, 2, 'Effective period should contain exactly 2 dates')
+	assertEqual(
+		parsed.length,
+		2,
+		'Effective period should contain exactly 2 dates',
+	)
 	await assertRpRpmConsistency(
 		context,
 		context.scheduleObject,
@@ -1035,37 +1408,124 @@ async function stepConsistencyRpVsRpm(context: StepContext): Promise<string> {
 }
 
 async function stepConsistencyWpVsWpm(context: StepContext): Promise<string> {
-	const weekly = buildWeeklySchedule(smallWeeklyRows(context.config), context.valueTag)
-	await writeViaWp(context, context.scheduleObject, PropertyIdentifier.WEEKLY_SCHEDULE, weekly)
-	const weeklyWp = await readViaRp(context, context.scheduleObject, PropertyIdentifier.WEEKLY_SCHEDULE)
-	await writeViaWpm(context, context.scheduleObject, PropertyIdentifier.WEEKLY_SCHEDULE, weekly)
-	const weeklyWpm = await readViaRp(context, context.scheduleObject, PropertyIdentifier.WEEKLY_SCHEDULE)
-	assertTrue(semanticEqual(weeklyWp, weeklyWpm), 'WP/WPM mismatch for WEEKLY_SCHEDULE')
+	const weekly = buildWeeklySchedule(
+		smallWeeklyRows(context.config),
+		context.valueTag,
+	)
+	await writeViaWp(
+		context,
+		context.scheduleObject,
+		PropertyIdentifier.WEEKLY_SCHEDULE,
+		weekly,
+	)
+	const weeklyWp = await readViaRp(
+		context,
+		context.scheduleObject,
+		PropertyIdentifier.WEEKLY_SCHEDULE,
+	)
+	await writeViaWpm(
+		context,
+		context.scheduleObject,
+		PropertyIdentifier.WEEKLY_SCHEDULE,
+		weekly,
+	)
+	const weeklyWpm = await readViaRp(
+		context,
+		context.scheduleObject,
+		PropertyIdentifier.WEEKLY_SCHEDULE,
+	)
+	assertTrue(
+		semanticEqual(weeklyWp, weeklyWpm),
+		'WP/WPM mismatch for WEEKLY_SCHEDULE',
+	)
 
 	const exception = buildExceptionSchedule(
 		smallExceptionCount(context.config),
 		smallTupleCount(context.config),
 		context.valueTag,
 	)
-	await writeViaWp(context, context.scheduleObject, PropertyIdentifier.EXCEPTION_SCHEDULE, exception)
-	const exceptionWp = await readViaRp(context, context.scheduleObject, PropertyIdentifier.EXCEPTION_SCHEDULE)
-	await writeViaWpm(context, context.scheduleObject, PropertyIdentifier.EXCEPTION_SCHEDULE, exception)
-	const exceptionWpm = await readViaRp(context, context.scheduleObject, PropertyIdentifier.EXCEPTION_SCHEDULE)
-	assertTrue(semanticEqual(exceptionWp, exceptionWpm), 'WP/WPM mismatch for EXCEPTION_SCHEDULE')
+	await writeViaWp(
+		context,
+		context.scheduleObject,
+		PropertyIdentifier.EXCEPTION_SCHEDULE,
+		exception,
+	)
+	const exceptionWp = await readViaRp(
+		context,
+		context.scheduleObject,
+		PropertyIdentifier.EXCEPTION_SCHEDULE,
+	)
+	await writeViaWpm(
+		context,
+		context.scheduleObject,
+		PropertyIdentifier.EXCEPTION_SCHEDULE,
+		exception,
+	)
+	const exceptionWpm = await readViaRp(
+		context,
+		context.scheduleObject,
+		PropertyIdentifier.EXCEPTION_SCHEDULE,
+	)
+	assertTrue(
+		semanticEqual(exceptionWp, exceptionWpm),
+		'WP/WPM mismatch for EXCEPTION_SCHEDULE',
+	)
 
 	const dateList = buildDateList()
-	await writeViaWp(context, context.calendarObject, PropertyIdentifier.DATE_LIST, dateList)
-	const dateListWp = await readViaRp(context, context.calendarObject, PropertyIdentifier.DATE_LIST)
-	await writeViaWpm(context, context.calendarObject, PropertyIdentifier.DATE_LIST, dateList)
-	const dateListWpm = await readViaRp(context, context.calendarObject, PropertyIdentifier.DATE_LIST)
-	assertTrue(semanticEqual(dateListWp, dateListWpm), 'WP/WPM mismatch for DATE_LIST')
+	await writeViaWp(
+		context,
+		context.calendarObject,
+		PropertyIdentifier.DATE_LIST,
+		dateList,
+	)
+	const dateListWp = await readViaRp(
+		context,
+		context.calendarObject,
+		PropertyIdentifier.DATE_LIST,
+	)
+	await writeViaWpm(
+		context,
+		context.calendarObject,
+		PropertyIdentifier.DATE_LIST,
+		dateList,
+	)
+	const dateListWpm = await readViaRp(
+		context,
+		context.calendarObject,
+		PropertyIdentifier.DATE_LIST,
+	)
+	assertTrue(
+		semanticEqual(dateListWp, dateListWpm),
+		'WP/WPM mismatch for DATE_LIST',
+	)
 
 	const period = buildEffectivePeriod()
-	await writeViaWp(context, context.scheduleObject, PropertyIdentifier.EFFECTIVE_PERIOD, period)
-	const periodWp = await readViaRp(context, context.scheduleObject, PropertyIdentifier.EFFECTIVE_PERIOD)
-	await writeViaWpm(context, context.scheduleObject, PropertyIdentifier.EFFECTIVE_PERIOD, period)
-	const periodWpm = await readViaRp(context, context.scheduleObject, PropertyIdentifier.EFFECTIVE_PERIOD)
-	assertTrue(semanticEqual(periodWp, periodWpm), 'WP/WPM mismatch for EFFECTIVE_PERIOD')
+	await writeViaWp(
+		context,
+		context.scheduleObject,
+		PropertyIdentifier.EFFECTIVE_PERIOD,
+		period,
+	)
+	const periodWp = await readViaRp(
+		context,
+		context.scheduleObject,
+		PropertyIdentifier.EFFECTIVE_PERIOD,
+	)
+	await writeViaWpm(
+		context,
+		context.scheduleObject,
+		PropertyIdentifier.EFFECTIVE_PERIOD,
+		period,
+	)
+	const periodWpm = await readViaRp(
+		context,
+		context.scheduleObject,
+		PropertyIdentifier.EFFECTIVE_PERIOD,
+	)
+	assertTrue(
+		semanticEqual(periodWp, periodWpm),
+		'WP/WPM mismatch for EFFECTIVE_PERIOD',
+	)
 
 	return 'WP/WPM semantic parity OK'
 }
