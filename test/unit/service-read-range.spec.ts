@@ -178,6 +178,24 @@ test.describe('ReadRangeAcknowledge', () => {
 		})
 	})
 
+	test('should report len including rangeBuffer and closing tag', () => {
+		const buffer = utils.getBuffer()
+		ReadRange.encodeAcknowledge(
+			buffer,
+			{ type: 12, instance: 500 },
+			5048,
+			0xffffffff,
+			{ bitsUsed: 24, value: [1, 2, 3] },
+			12,
+			Buffer.from([1, 2, 3]),
+			ReadRangeType.BY_POSITION,
+			2,
+		)
+		const result = ReadRange.decodeAcknowledge(buffer.buffer, 0, buffer.offset)
+		assert.ok(result)
+		assert.strictEqual(result.len, buffer.offset)
+	})
+
 	test('should decode log-datum: real-value [2]', () => {
 		const itemData = buildLogRecord((buf) => {
 			// context tag 2, primitive, 4 bytes (REAL)
