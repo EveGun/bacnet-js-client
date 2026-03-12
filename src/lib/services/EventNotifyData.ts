@@ -406,6 +406,34 @@ export default class EventNotifyData extends BacnetService {
 		}
 	}
 
+	private static decodeContextRawPayload(
+		buffer: Buffer,
+		offset: number,
+		tagNumber: number,
+	): { len: number; value: Buffer } | undefined {
+		const openingTagLen = EventNotifyData.decodeOpeningTag(
+			buffer,
+			offset,
+			tagNumber,
+		)
+		if (openingTagLen == null) return undefined
+		const totalLen = EventNotifyData.skipOpeningTag(buffer, offset, tagNumber)
+		if (totalLen == null || totalLen <= openingTagLen) return undefined
+		const closingTagLen = EventNotifyData.decodeClosingTag(
+			buffer,
+			offset + totalLen - 1,
+			tagNumber,
+		)
+		if (closingTagLen == null) return undefined
+		const payloadStart = offset + openingTagLen
+		const payloadEnd = offset + totalLen - closingTagLen
+		if (payloadEnd < payloadStart) return undefined
+		return {
+			len: totalLen,
+			value: buffer.subarray(payloadStart, payloadEnd),
+		}
+	}
+
 	private static decodeContextOctetString(
 		buffer: Buffer,
 		offset: number,
@@ -1085,7 +1113,7 @@ export default class EventNotifyData extends BacnetService {
 		offset: number,
 		eventData: EventNotifyDataResult,
 	): number | undefined {
-		switch (eventData.eventType) {
+			switch (eventData.eventType) {
 			case EventType.CHANGE_OF_BITSTRING:
 			case EventType.CHANGE_OF_STATE:
 			case EventType.CHANGE_OF_VALUE:
@@ -1103,11 +1131,18 @@ export default class EventNotifyData extends BacnetService {
 			case EventType.CHANGE_OF_STATUS_FLAGS:
 			case EventType.CHANGE_OF_RELIABILITY:
 			case EventType.CHANGE_OF_DISCRETE_VALUE:
-			case EventType.CHANGE_OF_TIMER:
-				break
-			default:
-				return EventNotifyData.skipOpeningTag(buffer, offset, 12)
-		}
+				case EventType.CHANGE_OF_TIMER:
+					break
+				default:
+					const rawPayload = EventNotifyData.decodeContextRawPayload(
+						buffer,
+						offset,
+						12,
+					)
+					if (!rawPayload) return undefined
+					eventData.eventValuesRaw = Buffer.from(rawPayload.value)
+					return rawPayload.len
+			}
 
 		let len = 0
 		const openingTag12 = EventNotifyData.decodeOpeningTag(
