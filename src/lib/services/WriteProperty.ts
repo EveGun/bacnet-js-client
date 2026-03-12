@@ -426,7 +426,30 @@ export default class WriteProperty extends BacnetService {
 			)
 			return
 		}
-		for (const [index, entry] of values.entries()) {
+		const normalizedValues = (Array.isArray(values)
+			? values
+			: [values]) as unknown as BACNetExceptionSchedulePayload
+		let entries: BACNetExceptionSchedulePayload
+		if (arrayIndex === ASN1_ARRAY_ALL) {
+			if (!Array.isArray(values)) {
+				throw new Error(
+					'Could not encode: exception schedule values must be an array',
+				)
+			}
+			entries = normalizedValues
+		} else {
+			const indexedEntry =
+				normalizedValues.length === 1
+					? normalizedValues[0]
+					: normalizedValues[arrayIndex - 1]
+			if (indexedEntry == null) {
+				throw new Error(
+					'Could not encode: exception schedule entry is missing for the selected index',
+				)
+			}
+			entries = [indexedEntry]
+		}
+		for (const [index, entry] of entries.entries()) {
 			if (entry.date.type === ApplicationTag.OBJECTIDENTIFIER) {
 				// BACnetSpecialEvent period choice: calendar-reference [1] BACnetObjectIdentifier
 				WriteProperty.encodeExceptionDate(buffer, entry.date)
