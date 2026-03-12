@@ -88,8 +88,9 @@ const getEncodingType = (
 			}
 			return 'UTF-16BE' // Default to big-endian
 		case CharacterStringEncoding.UCS_4:
-			// Handled by dedicated UCS-4 codec paths.
-			return 'utf8'
+			// UCS-4 is handled by dedicated codec paths and should never
+			// use iconv fallback encoding.
+			throw new Error('UCS-4 must use dedicated codec path')
 		case CharacterStringEncoding.ISO_8859_1:
 			return 'latin1'
 		case CharacterStringEncoding.MICROSOFT_DBCS:
@@ -141,6 +142,12 @@ const decodeUcs4CharacterString = (
 				: codePoint
 		value += String.fromCodePoint(normalizedCodePoint)
 	}
+	const trailingBytes = (length - startOffset) % 4
+	if (trailingBytes !== 0 && typeof console.debug === 'function') {
+		console.debug(
+			`decodeUcs4CharacterString: ignoring ${trailingBytes} trailing byte(s)`,
+		)
+	}
 
 	return value
 }
@@ -150,7 +157,7 @@ const encodeUcs4CharacterString = (value: string): Buffer => {
 	const encoded = Buffer.alloc(codePoints.length * 4)
 	let offset = 0
 	for (const c of codePoints) {
-		const codePoint = c.codePointAt(0) || 0
+		const codePoint = c.codePointAt(0) ?? 0
 		encoded[offset] = (codePoint >>> 24) & 0xff
 		encoded[offset + 1] = (codePoint >>> 16) & 0xff
 		encoded[offset + 2] = (codePoint >>> 8) & 0xff
