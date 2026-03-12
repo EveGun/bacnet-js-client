@@ -1227,7 +1227,7 @@ export const decodeReadAccessResult = (
 				newEntry.value = [
 					{
 						type: ApplicationTag.SPECIAL_EVENT,
-						value: selectedException,
+						value: [selectedException],
 						len: decodedException.len,
 					},
 				]

@@ -369,4 +369,52 @@ test.describe('ReadPropertyMultipleAcknowledge', () => {
 		assert.equal((day.value as any[]).length, 1)
 		assert.equal((day.value as any[])[0].value?.value, 23.25)
 	})
+
+	test('should decode indexed exception schedule as array payload in RPM', () => {
+		const buffer = utils.getBuffer()
+		baAsn1.encodeContextObjectId(buffer, 0, ObjectType.SCHEDULE, 1)
+		baAsn1.encodeOpeningTag(buffer, 1)
+		baAsn1.encodeContextEnumerated(
+			buffer,
+			2,
+			PropertyIdentifier.EXCEPTION_SCHEDULE,
+		)
+		baAsn1.encodeContextUnsigned(buffer, 3, 3)
+		baAsn1.encodeOpeningTag(buffer, 4)
+		baAsn1.encodeOpeningTag(buffer, 0)
+		baAsn1.encodeTag(buffer, 2, true, 3)
+		buffer.buffer[buffer.offset++] = 3
+		buffer.buffer[buffer.offset++] = 3
+		buffer.buffer[buffer.offset++] = 3
+		baAsn1.encodeClosingTag(buffer, 0)
+		baAsn1.encodeOpeningTag(buffer, 2)
+		baAsn1.bacappEncodeApplicationData(buffer, {
+			type: ApplicationTag.TIME,
+			value: new Date(2024, 0, 3, 9, 0, 0, 0),
+		})
+		baAsn1.bacappEncodeApplicationData(buffer, {
+			type: ApplicationTag.UNSIGNED_INTEGER,
+			value: 44,
+		})
+		baAsn1.encodeClosingTag(buffer, 2)
+		baAsn1.bacappEncodeApplicationData(buffer, {
+			type: ApplicationTag.UNSIGNED_INTEGER,
+			value: 3,
+		})
+		baAsn1.encodeClosingTag(buffer, 4)
+		baAsn1.encodeClosingTag(buffer, 1)
+
+		const result = ReadPropertyMultiple.decodeAcknowledge(
+			buffer.buffer,
+			0,
+			buffer.offset,
+		)
+		assert.ok(result)
+		const payload = result.values[0].values[0].value[0]
+		assert.equal(payload.type, ApplicationTag.SPECIAL_EVENT)
+		const values = payload.value as any[]
+		assert.equal(Array.isArray(values), true)
+		assert.equal(values.length, 1)
+		assert.equal(values[0].priority.value, 3)
+	})
 })

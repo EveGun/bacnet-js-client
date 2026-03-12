@@ -556,10 +556,7 @@ function unwrapIndexedWeeklyRows(weekly: BACNetTimeValueEntry[][]): BACNetTimeVa
 
 function extractExceptionEntries(value: BACNetAppData): any[] {
 	assertTrue(value.type === ApplicationTag.SPECIAL_EVENT, `Expected SPECIAL_EVENT, got type=${value.type}`)
-	const raw = value.value as unknown
-	if (Array.isArray(raw)) return raw
-	if (raw && typeof raw === 'object') return [raw]
-	throw new Error('Expected SPECIAL_EVENT value as object or array')
+	return value.value as any[]
 }
 
 function extractDateListEntries(value: BACNetAppData): any[] {

@@ -319,6 +319,52 @@ test.describe('ReadPropertyAcknowledge schedule/calendar compatibility', () => {
 			})
 		})
 
+	test('should decode indexed exception schedule as array payload', () => {
+		const buffer = utils.getBuffer()
+		encodeReadPropertyAckHeader(
+			buffer,
+			ObjectType.SCHEDULE,
+			17,
+			PropertyIdentifier.EXCEPTION_SCHEDULE,
+			3,
+		)
+
+		baAsn1.encodeOpeningTag(buffer, 0)
+		baAsn1.encodeTag(buffer, 2, true, 3)
+		buffer.buffer[buffer.offset++] = 3
+		buffer.buffer[buffer.offset++] = 3
+		buffer.buffer[buffer.offset++] = 3
+		baAsn1.encodeClosingTag(buffer, 0)
+		baAsn1.encodeOpeningTag(buffer, 2)
+		baAsn1.bacappEncodeApplicationData(buffer, {
+			type: ApplicationTag.TIME,
+			value: new Date(2024, 0, 3, 9, 0, 0, 0),
+		})
+		baAsn1.bacappEncodeApplicationData(buffer, {
+			type: ApplicationTag.UNSIGNED_INTEGER,
+			value: 33,
+		})
+		baAsn1.encodeClosingTag(buffer, 2)
+		baAsn1.bacappEncodeApplicationData(buffer, {
+			type: ApplicationTag.UNSIGNED_INTEGER,
+			value: 3,
+		})
+		baAsn1.encodeClosingTag(buffer, 3)
+
+		const result = ReadProperty.decodeAcknowledge(
+			buffer.buffer,
+			0,
+			buffer.offset,
+		)
+		assert.ok(result)
+		assert.equal(result.property.index, 3)
+		assert.equal(result.values[0].type, ApplicationTag.SPECIAL_EVENT)
+		const values = result.values[0].value as any[]
+		assert.equal(Array.isArray(values), true)
+		assert.equal(values.length, 1)
+		assert.equal(values[0].priority.value, 3)
+	})
+
 	test('should preserve raw date for partial wildcard single date in exception schedule', () => {
 		const buffer = utils.getBuffer()
 		encodeReadPropertyAckHeader(

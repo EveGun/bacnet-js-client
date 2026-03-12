@@ -306,7 +306,7 @@ export default class ReadProperty extends BacnetService {
 			if (selected == null) return undefined
 			values.push({
 				type: ApplicationTag.SPECIAL_EVENT,
-				value: selected,
+				value: [selected],
 			} as ApplicationData)
 			len += result.len
 		} else if (
