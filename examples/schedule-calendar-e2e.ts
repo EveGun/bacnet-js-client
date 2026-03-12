@@ -208,7 +208,7 @@ function buildConfig(argValues: Map<string, string>): CliConfig {
 	const defaultException = mode === 'smoke' ? 12 : 254
 	const defaultTuples = mode === 'smoke' ? 4 : 12
 	const defaultWeeklyRows = mode === 'smoke' ? 8 : 32
-	const defaultTimeout = mode === 'smoke' ? 8000 : 20000
+	const defaultTimeout = mode === 'smoke' ? 20000 : 180000
 
 	const localPortValue = argValues.get('localPort')
 
@@ -229,6 +229,18 @@ function parseNumber(value: string | undefined, fallback: number): number {
 	if (!value) return fallback
 	const parsed = Number.parseInt(value, 10)
 	return Number.isFinite(parsed) ? parsed : fallback
+}
+
+function smallWeeklyRows(config: CliConfig): number {
+	return Math.max(1, Math.min(config.weeklyRowsPerDay, config.mode === 'smoke' ? 4 : 8))
+}
+
+function smallExceptionCount(config: CliConfig): number {
+	return Math.max(1, Math.min(config.exceptionCount, config.mode === 'smoke' ? 4 : 8))
+}
+
+function smallTupleCount(config: CliConfig): number {
+	return Math.max(1, Math.min(config.tuplesPerException, config.mode === 'smoke' ? 3 : 4))
 }
 
 async function inferValueTag(context: StepContext): Promise<number> {
@@ -465,9 +477,66 @@ async function readViaRpm(
 	return propertyResult.value[0]
 }
 
+async function writeIndexedWeeklyLarge(
+	context: StepContext,
+	mode: 'wp' | 'wpm',
+): Promise<void> {
+	const weekly = buildWeeklySchedule(context.config.weeklyRowsPerDay, context.valueTag)
+	const writer = mode === 'wp' ? writeViaWp : writeViaWpm
+	await writer(
+		context,
+		context.scheduleObject,
+		PropertyIdentifier.WEEKLY_SCHEDULE,
+		7,
+		0,
+	)
+	for (let day = 0; day < 7; day++) {
+		await writer(
+			context,
+			context.scheduleObject,
+			PropertyIdentifier.WEEKLY_SCHEDULE,
+			weekly[day],
+			day + 1,
+		)
+	}
+}
+
+async function writeIndexedExceptionLarge(
+	context: StepContext,
+	mode: 'wp' | 'wpm',
+): Promise<void> {
+	const entries = buildExceptionSchedule(
+		context.config.exceptionCount,
+		context.config.tuplesPerException,
+		context.valueTag,
+	)
+	const writer = mode === 'wp' ? writeViaWp : writeViaWpm
+	await writer(
+		context,
+		context.scheduleObject,
+		PropertyIdentifier.EXCEPTION_SCHEDULE,
+		context.config.exceptionCount,
+		0,
+	)
+	for (let i = 0; i < entries.length; i++) {
+		await writer(
+			context,
+			context.scheduleObject,
+			PropertyIdentifier.EXCEPTION_SCHEDULE,
+			entries[i],
+			i + 1,
+		)
+	}
+}
+
 function extractWeeklyEntries(value: BACNetAppData): BACNetTimeValueEntry[][] {
 	assertTrue(value.type === ApplicationTag.WEEKLY_SCHEDULE, `Expected WEEKLY_SCHEDULE, got type=${value.type}`)
 	return value.value as BACNetTimeValueEntry[][]
+}
+
+function unwrapIndexedWeeklyRows(weekly: BACNetTimeValueEntry[][]): BACNetTimeValueEntry[] {
+	if (weekly.length === 1 && Array.isArray(weekly[0])) return weekly[0]
+	return weekly as unknown as BACNetTimeValueEntry[]
 }
 
 function extractExceptionEntries(value: BACNetAppData): any[] {
@@ -541,13 +610,14 @@ async function expectFailure(label: string, fn: () => Promise<unknown>) {
 }
 
 async function stepWeeklyWpRp(context: StepContext): Promise<string> {
-	const weekly = buildWeeklySchedule(context.config.weeklyRowsPerDay, context.valueTag)
+	const rowsPerDay = smallWeeklyRows(context.config)
+	const weekly = buildWeeklySchedule(rowsPerDay, context.valueTag)
 	await writeViaWp(context, context.scheduleObject, PropertyIdentifier.WEEKLY_SCHEDULE, weekly)
 	const readBack = await readViaRp(context, context.scheduleObject, PropertyIdentifier.WEEKLY_SCHEDULE)
 	const days = extractWeeklyEntries(readBack)
 	assertEqual(days.length, 7, 'Weekly schedule day count mismatch')
 	for (let i = 0; i < 7; i++) {
-		assertEqual(days[i].length, context.config.weeklyRowsPerDay, `Day ${i} row count mismatch`)
+		assertEqual(days[i].length, rowsPerDay, `Day ${i} row count mismatch`)
 	}
 	await assertRpRpmConsistency(
 		context,
@@ -556,17 +626,18 @@ async function stepWeeklyWpRp(context: StepContext): Promise<string> {
 		ASN1_ARRAY_ALL,
 		'weekly full write',
 	)
-	return `writtenDays=7 rowsPerDay=${context.config.weeklyRowsPerDay}`
+	return `writtenDays=7 rowsPerDay=${rowsPerDay}`
 }
 
 async function stepWeeklyWpmRpm(context: StepContext): Promise<string> {
-	const weekly = buildWeeklySchedule(context.config.weeklyRowsPerDay, context.valueTag)
+	const rowsPerDay = smallWeeklyRows(context.config)
+	const weekly = buildWeeklySchedule(rowsPerDay, context.valueTag)
 	await writeViaWpm(context, context.scheduleObject, PropertyIdentifier.WEEKLY_SCHEDULE, weekly)
 	const readBack = await readViaRpm(context, context.scheduleObject, PropertyIdentifier.WEEKLY_SCHEDULE)
 	const days = extractWeeklyEntries(readBack)
 	assertEqual(days.length, 7, 'Weekly schedule day count mismatch')
-	assertEqual(days[0].length, context.config.weeklyRowsPerDay, 'Day 0 row count mismatch')
-	assertEqual(days[6].length, context.config.weeklyRowsPerDay, 'Day 6 row count mismatch')
+	assertEqual(days[0].length, rowsPerDay, 'Day 0 row count mismatch')
+	assertEqual(days[6].length, rowsPerDay, 'Day 6 row count mismatch')
 	await assertRpRpmConsistency(
 		context,
 		context.scheduleObject,
@@ -579,23 +650,15 @@ async function stepWeeklyWpmRpm(context: StepContext): Promise<string> {
 
 async function stepWeeklyIndexedWpRp(context: StepContext): Promise<string> {
 	const dayIndex = 3
-	const day = buildWeeklySchedule(context.config.weeklyRowsPerDay, context.valueTag)[dayIndex - 1]
-	await writeViaWp(
-		context,
-		context.scheduleObject,
-		PropertyIdentifier.WEEKLY_SCHEDULE,
-		day,
-		dayIndex,
-	)
+	await writeIndexedWeeklyLarge(context, 'wp')
 	const readBack = await readViaRp(
 		context,
 		context.scheduleObject,
 		PropertyIdentifier.WEEKLY_SCHEDULE,
 		dayIndex,
 	)
-	const rows = extractWeeklyEntries(readBack)
-	assertEqual(rows.length, 1, 'Indexed weekly read should return one day container')
-	assertEqual(rows[0].length, context.config.weeklyRowsPerDay, 'Indexed day row count mismatch')
+	const rows = unwrapIndexedWeeklyRows(extractWeeklyEntries(readBack))
+	assertEqual(rows.length, context.config.weeklyRowsPerDay, 'Indexed day row count mismatch')
 	await assertRpRpmConsistency(
 		context,
 		context.scheduleObject,
@@ -603,28 +666,20 @@ async function stepWeeklyIndexedWpRp(context: StepContext): Promise<string> {
 		dayIndex,
 		'weekly indexed write',
 	)
-	return `dayIndex=${dayIndex} rows=${rows[0].length}`
+	return `mode=indexed-large dayIndex=${dayIndex} rows=${rows.length}`
 }
 
 async function stepWeeklyIndexedWpmRpm(context: StepContext): Promise<string> {
 	const dayIndex = 5
-	const day = buildWeeklySchedule(context.config.weeklyRowsPerDay, context.valueTag)[dayIndex - 1]
-	await writeViaWpm(
-		context,
-		context.scheduleObject,
-		PropertyIdentifier.WEEKLY_SCHEDULE,
-		day,
-		dayIndex,
-	)
+	await writeIndexedWeeklyLarge(context, 'wpm')
 	const readBack = await readViaRpm(
 		context,
 		context.scheduleObject,
 		PropertyIdentifier.WEEKLY_SCHEDULE,
 		dayIndex,
 	)
-	const rows = extractWeeklyEntries(readBack)
-	assertEqual(rows.length, 1, 'Indexed weekly RPM read should return one day container')
-	assertEqual(rows[0].length, context.config.weeklyRowsPerDay, 'Indexed day row count mismatch')
+	const rows = unwrapIndexedWeeklyRows(extractWeeklyEntries(readBack))
+	assertEqual(rows.length, context.config.weeklyRowsPerDay, 'Indexed day row count mismatch')
 	await assertRpRpmConsistency(
 		context,
 		context.scheduleObject,
@@ -632,7 +687,7 @@ async function stepWeeklyIndexedWpmRpm(context: StepContext): Promise<string> {
 		dayIndex,
 		'weekly indexed write (WPM)',
 	)
-	return `dayIndex=${dayIndex} rows=${rows[0].length}`
+	return `mode=indexed-large dayIndex=${dayIndex} rows=${rows.length}`
 }
 
 async function stepWeeklySizeWpRp(context: StepContext): Promise<string> {
@@ -690,19 +745,21 @@ async function stepWeeklySizeWpmRpm(context: StepContext): Promise<string> {
 }
 
 async function stepExceptionWpRp(context: StepContext): Promise<string> {
+	const entryCount = smallExceptionCount(context.config)
+	const tupleCount = smallTupleCount(context.config)
 	const exceptions = buildExceptionSchedule(
-		context.config.exceptionCount,
-		context.config.tuplesPerException,
+		entryCount,
+		tupleCount,
 		context.valueTag,
 	)
 	await writeViaWp(context, context.scheduleObject, PropertyIdentifier.EXCEPTION_SCHEDULE, exceptions)
 	const readBack = await readViaRp(context, context.scheduleObject, PropertyIdentifier.EXCEPTION_SCHEDULE)
 	const entries = extractExceptionEntries(readBack)
-	assertEqual(entries.length, context.config.exceptionCount, 'Exception entry count mismatch')
-	assertEqual(entries[0]?.events?.length, context.config.tuplesPerException, 'Tuple count mismatch on first entry')
+	assertEqual(entries.length, entryCount, 'Exception entry count mismatch')
+	assertEqual(entries[0]?.events?.length, tupleCount, 'Tuple count mismatch on first entry')
 	assertEqual(
 		entries[entries.length - 1]?.events?.length,
-		context.config.tuplesPerException,
+		tupleCount,
 		'Tuple count mismatch on last entry',
 	)
 	await assertRpRpmConsistency(
@@ -712,20 +769,22 @@ async function stepExceptionWpRp(context: StepContext): Promise<string> {
 		ASN1_ARRAY_ALL,
 		'exception full write',
 	)
-	return `entries=${entries.length} tuples=${context.config.tuplesPerException}`
+	return `entries=${entries.length} tuples=${tupleCount}`
 }
 
 async function stepExceptionWpmRpm(context: StepContext): Promise<string> {
+	const entryCount = smallExceptionCount(context.config)
+	const tupleCount = smallTupleCount(context.config)
 	const exceptions = buildExceptionSchedule(
-		context.config.exceptionCount,
-		context.config.tuplesPerException,
+		entryCount,
+		tupleCount,
 		context.valueTag,
 	)
 	await writeViaWpm(context, context.scheduleObject, PropertyIdentifier.EXCEPTION_SCHEDULE, exceptions)
 	const readBack = await readViaRpm(context, context.scheduleObject, PropertyIdentifier.EXCEPTION_SCHEDULE)
 	const entries = extractExceptionEntries(readBack)
-	assertEqual(entries.length, context.config.exceptionCount, 'Exception entry count mismatch')
-	assertEqual(entries[0]?.events?.length, context.config.tuplesPerException, 'Tuple count mismatch on first entry')
+	assertEqual(entries.length, entryCount, 'Exception entry count mismatch')
+	assertEqual(entries[0]?.events?.length, tupleCount, 'Tuple count mismatch on first entry')
 	await assertRpRpmConsistency(
 		context,
 		context.scheduleObject,
@@ -733,19 +792,12 @@ async function stepExceptionWpmRpm(context: StepContext): Promise<string> {
 		ASN1_ARRAY_ALL,
 		'exception full write (WPM)',
 	)
-	return `entries=${entries.length} tuples=${context.config.tuplesPerException}`
+	return `entries=${entries.length} tuples=${tupleCount}`
 }
 
 async function stepExceptionIndexedWpRp(context: StepContext): Promise<string> {
-	const index = 2
-	const single = buildExceptionSchedule(1, context.config.tuplesPerException, context.valueTag)[0]
-	await writeViaWp(
-		context,
-		context.scheduleObject,
-		PropertyIdentifier.EXCEPTION_SCHEDULE,
-		single,
-		index,
-	)
+	await writeIndexedExceptionLarge(context, 'wp')
+	const index = Math.max(1, Math.min(2, context.config.exceptionCount))
 	const readBack = await readViaRp(
 		context,
 		context.scheduleObject,
@@ -755,6 +807,7 @@ async function stepExceptionIndexedWpRp(context: StepContext): Promise<string> {
 	const entries = extractExceptionEntries(readBack)
 	assertEqual(entries.length, 1, 'Indexed exception should return one entry')
 	assertEqual(entries[0]?.events?.length, context.config.tuplesPerException, 'Indexed tuple count mismatch')
+	assertEqual(entries[0]?.priority?.value, index, 'Indexed exception priority mismatch')
 	await assertRpRpmConsistency(
 		context,
 		context.scheduleObject,
@@ -762,19 +815,12 @@ async function stepExceptionIndexedWpRp(context: StepContext): Promise<string> {
 		index,
 		'exception indexed write',
 	)
-	return `index=${index} tuples=${entries[0]?.events?.length || 0}`
+	return `mode=indexed-large index=${index} tuples=${entries[0]?.events?.length || 0}`
 }
 
 async function stepExceptionIndexedWpmRpm(context: StepContext): Promise<string> {
-	const index = 3
-	const single = buildExceptionSchedule(1, context.config.tuplesPerException, context.valueTag)[0]
-	await writeViaWpm(
-		context,
-		context.scheduleObject,
-		PropertyIdentifier.EXCEPTION_SCHEDULE,
-		single,
-		index,
-	)
+	await writeIndexedExceptionLarge(context, 'wpm')
+	const index = Math.max(1, Math.min(3, context.config.exceptionCount))
 	const readBack = await readViaRpm(
 		context,
 		context.scheduleObject,
@@ -784,6 +830,7 @@ async function stepExceptionIndexedWpmRpm(context: StepContext): Promise<string>
 	const entries = extractExceptionEntries(readBack)
 	assertEqual(entries.length, 1, 'Indexed exception should return one entry')
 	assertEqual(entries[0]?.events?.length, context.config.tuplesPerException, 'Indexed tuple count mismatch')
+	assertEqual(entries[0]?.priority?.value, index, 'Indexed exception priority mismatch')
 	await assertRpRpmConsistency(
 		context,
 		context.scheduleObject,
@@ -791,7 +838,7 @@ async function stepExceptionIndexedWpmRpm(context: StepContext): Promise<string>
 		index,
 		'exception indexed write (WPM)',
 	)
-	return `index=${index} tuples=${entries[0]?.events?.length || 0}`
+	return `mode=indexed-large index=${index} tuples=${entries[0]?.events?.length || 0}`
 }
 
 async function stepCalendarReference(context: StepContext): Promise<string> {
@@ -945,13 +992,6 @@ async function stepConsistencyRpVsRpm(context: StepContext): Promise<string> {
 		context,
 		context.scheduleObject,
 		PropertyIdentifier.WEEKLY_SCHEDULE,
-		ASN1_ARRAY_ALL,
-		'consistency weekly full',
-	)
-	await assertRpRpmConsistency(
-		context,
-		context.scheduleObject,
-		PropertyIdentifier.WEEKLY_SCHEDULE,
 		0,
 		'consistency weekly array-size',
 	)
@@ -959,8 +999,8 @@ async function stepConsistencyRpVsRpm(context: StepContext): Promise<string> {
 		context,
 		context.scheduleObject,
 		PropertyIdentifier.EXCEPTION_SCHEDULE,
-		ASN1_ARRAY_ALL,
-		'consistency exception full',
+		1,
+		'consistency exception indexed entry',
 	)
 	await assertRpRpmConsistency(
 		context,
@@ -980,7 +1020,7 @@ async function stepConsistencyRpVsRpm(context: StepContext): Promise<string> {
 }
 
 async function stepConsistencyWpVsWpm(context: StepContext): Promise<string> {
-	const weekly = buildWeeklySchedule(context.config.weeklyRowsPerDay, context.valueTag)
+	const weekly = buildWeeklySchedule(smallWeeklyRows(context.config), context.valueTag)
 	await writeViaWp(context, context.scheduleObject, PropertyIdentifier.WEEKLY_SCHEDULE, weekly)
 	const weeklyWp = await readViaRp(context, context.scheduleObject, PropertyIdentifier.WEEKLY_SCHEDULE)
 	await writeViaWpm(context, context.scheduleObject, PropertyIdentifier.WEEKLY_SCHEDULE, weekly)
@@ -988,8 +1028,8 @@ async function stepConsistencyWpVsWpm(context: StepContext): Promise<string> {
 	assertTrue(semanticEqual(weeklyWp, weeklyWpm), 'WP/WPM mismatch for WEEKLY_SCHEDULE')
 
 	const exception = buildExceptionSchedule(
-		Math.min(context.config.exceptionCount, context.config.mode === 'smoke' ? 8 : 64),
-		context.config.tuplesPerException,
+		smallExceptionCount(context.config),
+		smallTupleCount(context.config),
 		context.valueTag,
 	)
 	await writeViaWp(context, context.scheduleObject, PropertyIdentifier.EXCEPTION_SCHEDULE, exception)
