@@ -517,6 +517,10 @@ export interface ClientOptions {
 	broadcastAddress?: string
 	apduTimeout?: number
 	reuseAddr?: boolean
+	/**
+	 * Abort segmented responses when this client did not advertise
+	 * segmented-response support in the original request.
+	 */
 	abortOnSegmentedResponseWhenNoSegAccepted?: boolean
 }
 

@@ -187,21 +187,25 @@ export interface BACnetClientEvents {
 	registerForeignDevice: (
 		content: BaseEventContent & { payload: RegisterForeignDevicePayload },
 	) => void
+	/** Emitted after a successful Foreign Device Registration response. */
 	fdrRegistered: (
 		content: BaseEventContent & {
 			payload: { address: string; ttl: number; expiresAt: number }
 		},
 	) => void
+	/** Emitted shortly before local FDR expiry (no auto-renew is performed). */
 	fdrExpiring: (
 		content: BaseEventContent & {
 			payload: { address: string; ttl: number; expiresAt: number }
 		},
 	) => void
+	/** Emitted when locally tracked FDR lifetime has expired. */
 	fdrExpired: (
 		content: BaseEventContent & {
 			payload: { address: string; ttl: number; expiredAt: number }
 		},
 	) => void
+	/** Emitted when forwarded traffic is dropped because no active FDR exists. */
 	forwardedNpduDroppedNoFdr: (
 		content: BaseEventContent & {
 			payload: { address: string }

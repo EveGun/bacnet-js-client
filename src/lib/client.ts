@@ -1138,6 +1138,9 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 
 	/**
 	 * Registers this client as a foreign device in a BBMD.
+	 *
+	 * The library tracks local FDR lifetime and emits `fdrRegistered`,
+	 * `fdrExpiring`, and `fdrExpired`. Renewal is caller-managed.
 	 */
 	async registerForeignDevice(
 		receiver: BACNetAddress,
