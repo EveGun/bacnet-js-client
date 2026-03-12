@@ -147,6 +147,28 @@ test.describe('ReadRangeAcknowledge', () => {
 		})
 	})
 
+	test('should report len including rangeBuffer and closing tag', () => {
+		const buffer = utils.getBuffer()
+		ReadRange.encodeAcknowledge(
+			buffer,
+			{ type: 12, instance: 500 },
+			5048,
+			0xffffffff,
+			{ bitsUsed: 24, value: [1, 2, 3] },
+			12,
+			Buffer.from([1, 2, 3]),
+			ReadRangeType.BY_POSITION,
+			2,
+		)
+		const result = ReadRange.decodeAcknowledge(
+			buffer.buffer,
+			0,
+			buffer.offset,
+		)
+		assert.ok(result)
+		assert.strictEqual(result.len, buffer.offset)
+	})
+
 	test('should decode trend range values from range buffer', () => {
 		const applicationData = utils.getBuffer()
 		baAsn1.encodeOpeningTag(applicationData, 0)
