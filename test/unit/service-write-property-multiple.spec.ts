@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert'
 
 import * as utils from './utils'
+import * as baAsn1 from '../../src/lib/asn1'
 import { WritePropertyMultiple } from '../../src/lib/services'
 import {
 	ApplicationTag,
@@ -256,5 +257,85 @@ test.describe('bacnet - Services layer WritePropertyMultiple unit', () => {
 		assert.equal(value.type, ApplicationTag.WEEKLY_SCHEDULE)
 		assert.equal((value.value as any[]).length, 7)
 		assert.equal((value.value as any[])[0][0].value?.value, 21.5)
+	})
+
+	test('should reject indexed effective period in write-property-multiple encode', () => {
+		const buffer = utils.getBuffer()
+		assert.throws(() => {
+			WritePropertyMultiple.encode(
+				buffer,
+				{ type: ObjectType.SCHEDULE, instance: 1 },
+				[
+					{
+						property: { id: PropertyIdentifier.EFFECTIVE_PERIOD, index: 1 },
+						value: [
+							{ type: ApplicationTag.DATE, value: new Date(2024, 0, 1) },
+							{ type: ApplicationTag.DATE, value: new Date(2024, 11, 31) },
+						] as any,
+						priority: 0,
+					},
+				],
+			)
+		}, /effective period does not support indexed access/)
+	})
+
+	test('should reject indexed date list in write-property-multiple encode', () => {
+		const buffer = utils.getBuffer()
+		assert.throws(() => {
+			WritePropertyMultiple.encode(
+				buffer,
+				{ type: ObjectType.CALENDAR, instance: 1 },
+				[
+					{
+						property: { id: PropertyIdentifier.DATE_LIST, index: 1 },
+						value: [
+							{ type: ApplicationTag.DATE, value: new Date(2025, 7, 22) },
+						] as any,
+						priority: 0,
+					},
+				],
+			)
+		}, /date list does not support indexed access/)
+	})
+
+	test('should reject indexed effective period in write-property-multiple decode', () => {
+		const buffer = utils.getBuffer()
+		baAsn1.encodeContextObjectId(buffer, 0, ObjectType.SCHEDULE, 1)
+		baAsn1.encodeOpeningTag(buffer, 1)
+		baAsn1.encodeContextEnumerated(buffer, 0, PropertyIdentifier.EFFECTIVE_PERIOD)
+		baAsn1.encodeContextUnsigned(buffer, 1, 1)
+		baAsn1.encodeOpeningTag(buffer, 2)
+		baAsn1.bacappEncodeApplicationData(buffer, {
+			type: ApplicationTag.DATE,
+			value: new Date(2024, 0, 1),
+		})
+		baAsn1.bacappEncodeApplicationData(buffer, {
+			type: ApplicationTag.DATE,
+			value: new Date(2024, 11, 31),
+		})
+		baAsn1.encodeClosingTag(buffer, 2)
+		baAsn1.encodeClosingTag(buffer, 1)
+
+		const result = WritePropertyMultiple.decode(buffer.buffer, 0, buffer.offset)
+		assert.equal(result, undefined)
+	})
+
+	test('should reject indexed date list in write-property-multiple decode', () => {
+		const buffer = utils.getBuffer()
+		baAsn1.encodeContextObjectId(buffer, 0, ObjectType.CALENDAR, 1)
+		baAsn1.encodeOpeningTag(buffer, 1)
+		baAsn1.encodeContextEnumerated(buffer, 0, PropertyIdentifier.DATE_LIST)
+		baAsn1.encodeContextUnsigned(buffer, 1, 1)
+		baAsn1.encodeOpeningTag(buffer, 2)
+		baAsn1.encodeTag(buffer, 0, true, 4)
+		buffer.buffer[buffer.offset++] = 125
+		buffer.buffer[buffer.offset++] = 8
+		buffer.buffer[buffer.offset++] = 22
+		buffer.buffer[buffer.offset++] = 5
+		baAsn1.encodeClosingTag(buffer, 2)
+		baAsn1.encodeClosingTag(buffer, 1)
+
+		const result = WritePropertyMultiple.decode(buffer.buffer, 0, buffer.offset)
+		assert.equal(result, undefined)
 	})
 })

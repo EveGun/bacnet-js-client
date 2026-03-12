@@ -1196,7 +1196,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 
 	/**
 	 * The writeProperty command writes a single property of an object to a device.
-	 * `options.arrayIndex` supports indexed writes for schedule/calendar properties.
+	 * `options.arrayIndex` supports indexed writes for schedule array properties.
 	 */
 	async writeProperty(
 		receiver: BACNetAddress,
@@ -1218,7 +1218,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			arrayIndex:
 				(options as WritePropertyOptions).arrayIndex ?? ASN1_ARRAY_ALL,
 			priority:
-				(options as WritePropertyOptions).priority || ASN1_NO_PRIORITY,
+				(options as WritePropertyOptions).priority ?? ASN1_NO_PRIORITY,
 		}
 
 		const buffer = this._getApduBuffer(receiver)

@@ -527,7 +527,7 @@ test.describe('ReadPropertyAcknowledge schedule/calendar compatibility', () => {
 		)
 	})
 
-	test('should decode single calendar entry when array index is set', () => {
+	test('should reject indexed calendar date list acknowledge payload', () => {
 		const buffer = utils.getBuffer()
 		encodeReadPropertyAckHeader(
 			buffer,
@@ -545,12 +545,33 @@ test.describe('ReadPropertyAcknowledge schedule/calendar compatibility', () => {
 			0,
 			buffer.offset,
 		)
-		assert.ok(result)
-		assert.equal(result.property.index, 1)
-		assert.equal(result.values[0].type, ApplicationTag.CALENDAR_ENTRY)
-		const entry = result.values[0].value as any
-		assert.equal(entry.type, ApplicationTag.DATE)
-		assert.ok(entry.value instanceof Date)
+		assert.equal(result, undefined)
+	})
+
+	test('should reject indexed effective period read request encoding', () => {
+		const buffer = utils.getBuffer()
+		assert.throws(() => {
+			ReadProperty.encode(
+				buffer,
+				ObjectType.SCHEDULE,
+				1,
+				PropertyIdentifier.EFFECTIVE_PERIOD,
+				1,
+			)
+		}, /effective period does not support indexed access/)
+	})
+
+	test('should reject indexed date list read request encoding', () => {
+		const buffer = utils.getBuffer()
+		assert.throws(() => {
+			ReadProperty.encode(
+				buffer,
+				ObjectType.CALENDAR,
+				1,
+				PropertyIdentifier.DATE_LIST,
+				1,
+			)
+		}, /date list does not support indexed access/)
 	})
 })
 

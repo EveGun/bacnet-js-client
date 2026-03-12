@@ -18,6 +18,15 @@ import {
 import { BacnetService } from './AbstractServices'
 
 export default class ReadProperty extends BacnetService {
+	private static pickIndexedEntry<T>(
+		items: T[],
+		arrayIndex: number,
+	): T | undefined {
+		if (items.length === 1) return items[0]
+		const idx = arrayIndex - 1
+		return idx >= 0 && idx < items.length ? items[idx] : undefined
+	}
+
 	public static encode(
 		buffer: EncodeBuffer,
 		objectType: number,
@@ -25,6 +34,24 @@ export default class ReadProperty extends BacnetService {
 		propertyId: number,
 		arrayIndex: number,
 	) {
+		if (
+			objectType === ObjectType.SCHEDULE &&
+			propertyId === PropertyIdentifier.EFFECTIVE_PERIOD &&
+			arrayIndex !== ASN1_ARRAY_ALL
+		) {
+			throw new Error(
+				'Could not encode: effective period does not support indexed access',
+			)
+		}
+		if (
+			objectType === ObjectType.CALENDAR &&
+			propertyId === PropertyIdentifier.DATE_LIST &&
+			arrayIndex !== ASN1_ARRAY_ALL
+		) {
+			throw new Error(
+				'Could not encode: date list does not support indexed access',
+			)
+		}
 		if (objectType <= ASN1_MAX_OBJECT) {
 			baAsn1.encodeContextObjectId(buffer, 0, objectType, objectInstance)
 		}
@@ -32,11 +59,7 @@ export default class ReadProperty extends BacnetService {
 			baAsn1.encodeContextEnumerated(buffer, 1, propertyId)
 		}
 		if (arrayIndex !== ASN1_ARRAY_ALL) {
-			baAsn1.encodeContextUnsigned(
-				buffer,
-				2,
-				arrayIndex || arrayIndex === 0 ? arrayIndex : ASN1_ARRAY_ALL,
-			)
+			baAsn1.encodeContextUnsigned(buffer, 2, arrayIndex)
 		}
 	}
 
@@ -175,6 +198,20 @@ export default class ReadProperty extends BacnetService {
 		} else {
 			property.index = ASN1_ARRAY_ALL
 		}
+		if (
+			objectId.type === ObjectType.SCHEDULE &&
+			property.id === PropertyIdentifier.EFFECTIVE_PERIOD &&
+			property.index !== ASN1_ARRAY_ALL
+		) {
+			return undefined
+		}
+		if (
+			objectId.type === ObjectType.CALENDAR &&
+			property.id === PropertyIdentifier.DATE_LIST &&
+			property.index !== ASN1_ARRAY_ALL
+		) {
+			return undefined
+		}
 		const values: ApplicationData[] = []
 		if (!baAsn1.decodeIsOpeningTagNumber(buffer, offset + len, 3)) return
 		len++
@@ -205,12 +242,17 @@ export default class ReadProperty extends BacnetService {
 				offset + len,
 				apduLen - len,
 			)
-			if (!result || !result.value || !Array.isArray(result.value[0])) {
+			if (!result || !Array.isArray(result.value)) {
 				return undefined
 			}
+			const selected = ReadProperty.pickIndexedEntry(
+				result.value as any[],
+				property.index,
+			)
+			if (!Array.isArray(selected)) return undefined
 			values.push({
 				type: ApplicationTag.WEEKLY_SCHEDULE,
-				value: result.value[0],
+				value: selected,
 			} as ApplicationData)
 			len += result.len
 		} else if (
@@ -240,12 +282,17 @@ export default class ReadProperty extends BacnetService {
 				offset + len,
 				apduLen - len,
 			)
-			if (!result || !Array.isArray(result.value) || result.value[0] == null) {
+			if (!result || !Array.isArray(result.value)) {
 				return undefined
 			}
+			const selected = ReadProperty.pickIndexedEntry(
+				result.value as any[],
+				property.index,
+			)
+			if (selected == null) return undefined
 			values.push({
 				type: ApplicationTag.SPECIAL_EVENT,
-				value: result.value[0],
+				value: selected,
 			} as ApplicationData)
 			len += result.len
 		} else if (
@@ -278,25 +325,6 @@ export default class ReadProperty extends BacnetService {
 			values.push({
 				type: ApplicationTag.CALENDAR_ENTRY,
 				value: result.value,
-			} as ApplicationData)
-			len += result.len
-		} else if (
-			objectId.type === ObjectType.CALENDAR &&
-			property.id === PropertyIdentifier.DATE_LIST &&
-			property.index !== ASN1_ARRAY_ALL &&
-			property.index !== 0
-		) {
-			const result = baAsn1.decodeCalendarDatelist(
-				buffer,
-				offset + len,
-				apduLen - len,
-			)
-			if (!result || !Array.isArray(result.value) || result.value[0] == null) {
-				return undefined
-			}
-			values.push({
-				type: ApplicationTag.CALENDAR_ENTRY,
-				value: result.value[0],
 			} as ApplicationData)
 			len += result.len
 		} else {

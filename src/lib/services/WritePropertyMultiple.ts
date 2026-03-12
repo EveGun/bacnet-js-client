@@ -21,6 +21,15 @@ import { BacnetService } from './AbstractServices'
 import WriteProperty from './WriteProperty'
 
 export default class WritePropertyMultiple extends BacnetService {
+	private static pickIndexedEntry<T>(
+		items: T[],
+		arrayIndex: number,
+	): T | undefined {
+		if (items.length === 1) return items[0]
+		const idx = arrayIndex - 1
+		return idx >= 0 && idx < items.length ? items[idx] : undefined
+	}
+
 	public static encode(
 		buffer: EncodeBuffer,
 		objectId: BACNetObjectID,
@@ -35,6 +44,24 @@ export default class WritePropertyMultiple extends BacnetService {
 		baAsn1.encodeOpeningTag(buffer, 1)
 		values.forEach((pValue) => {
 			const propertyIndex = pValue.property.index ?? ASN1_ARRAY_ALL
+			if (
+				objectId.type === ObjectType.SCHEDULE &&
+				pValue.property.id === PropertyIdentifier.EFFECTIVE_PERIOD &&
+				propertyIndex !== ASN1_ARRAY_ALL
+			) {
+				throw new Error(
+					'Could not encode: effective period does not support indexed access',
+				)
+			}
+			if (
+				objectId.type === ObjectType.CALENDAR &&
+				pValue.property.id === PropertyIdentifier.DATE_LIST &&
+				propertyIndex !== ASN1_ARRAY_ALL
+			) {
+				throw new Error(
+					'Could not encode: date list does not support indexed access',
+				)
+			}
 			baAsn1.encodeContextEnumerated(buffer, 0, pValue.property.id)
 			if (propertyIndex !== ASN1_ARRAY_ALL) {
 				baAsn1.encodeContextUnsigned(buffer, 1, propertyIndex)
@@ -102,6 +129,20 @@ export default class WritePropertyMultiple extends BacnetService {
 			}
 			newEntry.property = { id: propertyId, index: arrayIndex }
 			if (
+				objectId.type === ObjectType.SCHEDULE &&
+				propertyId === PropertyIdentifier.EFFECTIVE_PERIOD &&
+				arrayIndex !== ASN1_ARRAY_ALL
+			) {
+				return undefined
+			}
+			if (
+				objectId.type === ObjectType.CALENDAR &&
+				propertyId === PropertyIdentifier.DATE_LIST &&
+				arrayIndex !== ASN1_ARRAY_ALL
+			) {
+				return undefined
+			}
+			if (
 				result.tagNumber !== 2 ||
 				!baAsn1.decodeIsOpeningTag(buffer, offset + len - 1)
 			)
@@ -138,12 +179,17 @@ export default class WritePropertyMultiple extends BacnetService {
 					apduLen - len,
 					2,
 				)
-				if (!decodedWeekly || !Array.isArray(decodedWeekly.value[0])) {
+				if (!decodedWeekly || !Array.isArray(decodedWeekly.value)) {
 					return undefined
 				}
+				const selected = WritePropertyMultiple.pickIndexedEntry(
+					decodedWeekly.value as any[],
+					arrayIndex,
+				)
+				if (!Array.isArray(selected)) return undefined
 				values.push({
 					type: ApplicationTag.WEEKLY_SCHEDULE,
-					value: decodedWeekly.value[0],
+					value: selected,
 				})
 				len += decodedWeekly.len
 				handledScheduleCalendar = true
@@ -177,16 +223,17 @@ export default class WritePropertyMultiple extends BacnetService {
 					apduLen - len,
 					2,
 				)
-				if (
-					!decodedException ||
-					!Array.isArray(decodedException.value) ||
-					decodedException.value[0] == null
-				) {
+				if (!decodedException || !Array.isArray(decodedException.value)) {
 					return undefined
 				}
+				const selected = WritePropertyMultiple.pickIndexedEntry(
+					decodedException.value as any[],
+					arrayIndex,
+				)
+				if (selected == null) return undefined
 				values.push({
 					type: ApplicationTag.SPECIAL_EVENT,
-					value: decodedException.value[0],
+					value: selected,
 				})
 				len += decodedException.len
 				handledScheduleCalendar = true
@@ -225,32 +272,6 @@ export default class WritePropertyMultiple extends BacnetService {
 				values.push({
 					type: ApplicationTag.CALENDAR_ENTRY,
 					value: decodedDateList.value,
-				})
-				len += decodedDateList.len
-				handledScheduleCalendar = true
-			} else if (
-				objectId.type === ObjectType.CALENDAR &&
-				propertyId === PropertyIdentifier.DATE_LIST &&
-				arrayIndex !== ASN1_ARRAY_ALL &&
-				arrayIndex !== 0
-			) {
-				const decodedDateList = baAsn1.decodeCalendarDatelist(
-					buffer,
-					offset + len,
-					apduLen - len,
-					2,
-					2,
-				)
-				if (
-					!decodedDateList ||
-					!Array.isArray(decodedDateList.value) ||
-					decodedDateList.value[0] == null
-				) {
-					return undefined
-				}
-				values.push({
-					type: ApplicationTag.CALENDAR_ENTRY,
-					value: decodedDateList.value[0],
 				})
 				len += decodedDateList.len
 				handledScheduleCalendar = true

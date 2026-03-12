@@ -504,43 +504,10 @@ export default class WriteProperty extends BacnetService {
 		values: BACNetEffectivePeriodWriteValue,
 		arrayIndex: number,
 	) {
-		if (arrayIndex === 0) {
-			WriteProperty.encodeArrayLengthPayload(
-				buffer,
-				'effective period',
-				values,
-				2,
-			)
-			return
-		}
 		if (arrayIndex !== ASN1_ARRAY_ALL) {
-			if (arrayIndex < 1 || arrayIndex > 2) {
-				throw new Error(
-					'Could not encode: effective period index must be 1 or 2',
-				)
-			}
-			const entry = Array.isArray(values)
-				? values[arrayIndex - 1]
-				: values
-			if (entry == null) {
-				throw new Error(
-					'Could not encode: effective period entry is missing for the selected index',
-				)
-			}
-			if (
-				typeof entry === 'number' ||
-				(WriteProperty.hasTypeAndValue(entry) &&
-					entry.type === ApplicationTag.UNSIGNED_INTEGER)
-			) {
-				throw new Error(
-					'Could not encode: effective period entry must be a date',
-				)
-			}
-			WriteProperty.encodeDate(
-				buffer,
-				WriteProperty.extractDateInput(entry as any),
+			throw new Error(
+				'Could not encode: effective period does not support indexed access',
 			)
-			return
 		}
 		if (!Array.isArray(values)) {
 			throw new Error(
@@ -565,38 +532,22 @@ export default class WriteProperty extends BacnetService {
 		values: BACNetCalendarDateListWriteValue,
 		arrayIndex: number,
 	) {
-		if (arrayIndex === 0) {
-			WriteProperty.encodeArrayLengthPayload(
-				buffer,
-				'calendar date list',
-				values,
+		if (arrayIndex !== ASN1_ARRAY_ALL) {
+			throw new Error(
+				'Could not encode: calendar date list does not support indexed access',
 			)
-			return
 		}
 		const normalizedValues = (Array.isArray(values) ? values : [
 			values,
 		]) as unknown as BACNetCalendarDateListPayload
 		const dateListValues = normalizedValues
 		let entries: BACNetCalendarDateListPayload
-		if (arrayIndex === ASN1_ARRAY_ALL) {
-			if (!Array.isArray(values)) {
-				throw new Error(
-					'Could not encode: calendar date list should be an array',
-				)
-			}
-			entries = dateListValues
-		} else {
-			const indexedEntry = dateListValues[arrayIndex - 1]
-			if (indexedEntry != null) {
-				entries = [indexedEntry]
-			} else if (dateListValues.length === 1 && dateListValues[0] != null) {
-				entries = [dateListValues[0]]
-			} else {
-				throw new Error(
-					'Could not encode: calendar date list entry is missing for the selected index',
-				)
-			}
+		if (!Array.isArray(values)) {
+			throw new Error(
+				'Could not encode: calendar date list should be an array',
+			)
 		}
+		entries = dateListValues
 		for (const entry of entries) {
 			if (entry?.type === ApplicationTag.DATE) {
 				WriteProperty.encodeDate(

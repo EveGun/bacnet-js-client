@@ -1113,6 +1113,20 @@ export const decodeReadAccessResult = (
 			newEntry.index = unsignedResult.value
 			len += unsignedResult.len
 		}
+		if (
+			value.objectId.type === ObjectType.SCHEDULE &&
+			newEntry.id === PropertyIdentifier.EFFECTIVE_PERIOD &&
+			newEntry.index !== ASN1_ARRAY_ALL
+		) {
+			return undefined
+		}
+		if (
+			value.objectId.type === ObjectType.CALENDAR &&
+			newEntry.id === PropertyIdentifier.DATE_LIST &&
+			newEntry.index !== ASN1_ARRAY_ALL
+		) {
+			return undefined
+		}
 
 		const tagResult3 = decodeTagNumberAndValue(buffer, offset + len)
 		len += tagResult3.len
@@ -1151,13 +1165,17 @@ export const decodeReadAccessResult = (
 					apduLen - len,
 					4,
 				)
-				if (!decodedWeekly || !Array.isArray(decodedWeekly.value[0])) {
+				if (!decodedWeekly || !Array.isArray(decodedWeekly.value)) {
 					return undefined
 				}
+				const weeklyIdx =
+					decodedWeekly.value.length === 1 ? 0 : newEntry.index - 1
+				const selectedWeekly = decodedWeekly.value[weeklyIdx]
+				if (!Array.isArray(selectedWeekly)) return undefined
 				newEntry.value = [
 					{
 						type: ApplicationTag.WEEKLY_SCHEDULE,
-						value: decodedWeekly.value[0],
+						value: selectedWeekly,
 						len: decodedWeekly.len,
 					},
 				]
@@ -1196,17 +1214,17 @@ export const decodeReadAccessResult = (
 					apduLen - len,
 					4,
 				)
-				if (
-					!decodedException ||
-					!Array.isArray(decodedException.value) ||
-					decodedException.value[0] == null
-				) {
+				if (!decodedException || !Array.isArray(decodedException.value)) {
 					return undefined
 				}
+				const exceptionIdx =
+					decodedException.value.length === 1 ? 0 : newEntry.index - 1
+				const selectedException = decodedException.value[exceptionIdx]
+				if (selectedException == null) return undefined
 				newEntry.value = [
 					{
 						type: ApplicationTag.SPECIAL_EVENT,
-						value: decodedException.value[0],
+						value: selectedException,
 						len: decodedException.len,
 					},
 				]
@@ -1251,35 +1269,6 @@ export const decodeReadAccessResult = (
 					{
 						type: ApplicationTag.CALENDAR_ENTRY,
 						value: decodedDateList.value,
-						len: decodedDateList.len,
-					},
-				]
-				len += decodedDateList.len
-				handledScheduleCalendar = true
-			} else if (
-				value.objectId.type === ObjectType.CALENDAR &&
-				newEntry.id === PropertyIdentifier.DATE_LIST &&
-				newEntry.index !== ASN1_ARRAY_ALL &&
-				newEntry.index !== 0
-			) {
-				const decodedDateList = decodeCalendarDatelist(
-					buffer,
-					offset + len,
-					apduLen - len,
-					4,
-					4,
-				)
-				if (
-					!decodedDateList ||
-					!Array.isArray(decodedDateList.value) ||
-					decodedDateList.value[0] == null
-				) {
-					return undefined
-				}
-				newEntry.value = [
-					{
-						type: ApplicationTag.CALENDAR_ENTRY,
-						value: decodedDateList.value[0],
 						len: decodedDateList.len,
 					},
 				]
@@ -2424,6 +2413,7 @@ export const decodeExceptionSchedule = (
 			const objectId = decodeObjectId(buffer, offset + len)
 			len += objectId.len
 			decoded.date = {
+				len: objectId.len,
 				type: ApplicationTag.OBJECTIDENTIFIER,
 				value: {
 					type: objectId.objectType,
@@ -2613,74 +2603,6 @@ export const decodeCalendarDatelist = (
 		return undefined
 	len += decodeTagNumberAndValue(buffer, offset + len).len
 	return { len, value: result }
-}
-
-export const decodeScheduleCalendarValue = (
-	buffer: Buffer,
-	offset: number,
-	apduLen: number,
-	objectType: number,
-	propertyId: number,
-	arrayIndex: number,
-	closingTagNumber: number,
-	openingTagNumber: number,
-): { type: ApplicationTag; value: unknown; len: number } | null | undefined => {
-	const isAllItems = arrayIndex === ASN1_ARRAY_ALL
-	const isIndexed = arrayIndex !== ASN1_ARRAY_ALL && arrayIndex !== 0
-
-	if (
-		objectType === ObjectType.SCHEDULE &&
-		propertyId === PropertyIdentifier.WEEKLY_SCHEDULE
-	) {
-		if (!isAllItems && !isIndexed) return null
-		const decoded = decodeWeeklySchedule(buffer, offset, apduLen, closingTagNumber)
-		if (!decoded) return undefined
-		if (isIndexed) {
-			if (!Array.isArray(decoded.value[0])) return undefined
-			return { type: ApplicationTag.WEEKLY_SCHEDULE, value: decoded.value[0], len: decoded.len }
-		}
-		return { type: ApplicationTag.WEEKLY_SCHEDULE, value: decoded.value, len: decoded.len }
-	}
-
-	if (
-		objectType === ObjectType.SCHEDULE &&
-		propertyId === PropertyIdentifier.EXCEPTION_SCHEDULE
-	) {
-		if (!isAllItems && !isIndexed) return null
-		const decoded = decodeExceptionSchedule(buffer, offset, apduLen, closingTagNumber)
-		if (!decoded) return undefined
-		if (isIndexed) {
-			if (!Array.isArray(decoded.value) || decoded.value[0] == null) return undefined
-			return { type: ApplicationTag.SPECIAL_EVENT, value: decoded.value[0], len: decoded.len }
-		}
-		return { type: ApplicationTag.SPECIAL_EVENT, value: decoded.value, len: decoded.len }
-	}
-
-	if (
-		objectType === ObjectType.SCHEDULE &&
-		propertyId === PropertyIdentifier.EFFECTIVE_PERIOD &&
-		isAllItems
-	) {
-		const decoded = decodeScheduleEffectivePeriod(buffer, offset, apduLen, closingTagNumber, openingTagNumber)
-		if (!decoded) return undefined
-		return { type: ApplicationTag.DATERANGE, value: decoded.value, len: decoded.len }
-	}
-
-	if (
-		objectType === ObjectType.CALENDAR &&
-		propertyId === PropertyIdentifier.DATE_LIST
-	) {
-		if (!isAllItems && !isIndexed) return null
-		const decoded = decodeCalendarDatelist(buffer, offset, apduLen, closingTagNumber, openingTagNumber)
-		if (!decoded) return undefined
-		if (isIndexed) {
-			if (!Array.isArray(decoded.value) || decoded.value[0] == null) return undefined
-			return { type: ApplicationTag.CALENDAR_ENTRY, value: decoded.value[0], len: decoded.len }
-		}
-		return { type: ApplicationTag.CALENDAR_ENTRY, value: decoded.value, len: decoded.len }
-	}
-
-	return null
 }
 
 export const decodeRange = (

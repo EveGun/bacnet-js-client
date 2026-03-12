@@ -934,6 +934,26 @@ test.describe('WriteProperty schedule/calendar compatibility', () => {
 		assert.ok(hex.includes('ffffffff'))
 	})
 
+	test('should reject indexed effective period payload', () => {
+		const buffer = utils.getBuffer()
+		const payload = [
+			{ type: ApplicationTag.DATE, value: new Date(2024, 0, 1) },
+			{ type: ApplicationTag.DATE, value: ZERO_DATE },
+		]
+
+		assert.throws(() => {
+			WriteProperty.encode(
+				buffer,
+				ObjectType.SCHEDULE,
+				0,
+				PropertyIdentifier.EFFECTIVE_PERIOD,
+				1,
+				0,
+				payload as any,
+			)
+		}, /effective period does not support indexed access/)
+	})
+
 	test('should reject effective period payload when values is not an array', () => {
 		const buffer = utils.getBuffer()
 		const payload = {
@@ -1090,43 +1110,20 @@ test.describe('WriteProperty schedule/calendar compatibility', () => {
 		assert.deepStrictEqual(third.value, { month: 2, week: 2, wday: 2 })
 	})
 
-	test('should encode single calendar date list entry when array index is set', () => {
+	test('should reject indexed calendar date list payload', () => {
 		const buffer = utils.getBuffer()
-		const payload = {
-			type: ApplicationTag.DATE,
-			value: new Date(2025, 7, 22),
-		}
-		WriteProperty.encode(
-			buffer,
-			ObjectType.CALENDAR,
-			0,
-			PropertyIdentifier.DATE_LIST,
-			1,
-			0,
-			payload as any,
-		)
-
-		const result = WriteProperty.decode(buffer.buffer, 0, buffer.offset)
-		assert.ok(result)
-		assert.equal(result.value.property.id, PropertyIdentifier.DATE_LIST)
-		assert.equal(result.value.property.index, 1)
-
-		let payloadOffset = -1
-		for (let i = 0; i < buffer.offset; i++) {
-			if (baAsn1.decodeIsOpeningTagNumber(buffer.buffer, i, 3)) {
-				payloadOffset = i + 1
-				break
-			}
-		}
-		assert.notEqual(payloadOffset, -1)
-		const dateList = baAsn1.decodeCalendarDatelist(
-			buffer.buffer,
-			payloadOffset,
-			buffer.offset - payloadOffset,
-		)
-		assert.ok(dateList)
-		assert.equal(dateList.value.length, 1)
-		assert.equal(dateList.value[0].type, ApplicationTag.DATE)
+		const payload = [{ type: ApplicationTag.DATE, value: new Date(2025, 7, 22) }]
+		assert.throws(() => {
+			WriteProperty.encode(
+				buffer,
+				ObjectType.CALENDAR,
+				0,
+				PropertyIdentifier.DATE_LIST,
+				1,
+				0,
+				payload as any,
+			)
+		}, /calendar date list does not support indexed access/)
 	})
 
 	test('should reject calendar date list payload when values is not an array', () => {
