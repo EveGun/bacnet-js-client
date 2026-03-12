@@ -451,5 +451,18 @@ test.describe('bacnet - ASN1 layer', () => {
 				[0xb4, 14, 30, 5, 13],
 			)
 		})
+
+		test('should clamp rounded hundredths to 99', () => {
+			const buffer = { buffer: Buffer.alloc(16), offset: 0 }
+			baAsn1.encodeApplicationTime(
+				buffer,
+				new Date(2025, 0, 2, 14, 30, 5, 995),
+			)
+
+			assert.deepStrictEqual(
+				Array.from(buffer.buffer.subarray(0, buffer.offset)),
+				[0xb4, 14, 30, 5, 99],
+			)
+		})
 	})
 })

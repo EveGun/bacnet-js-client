@@ -575,7 +575,10 @@ const encodeBacnetTime = (buffer: EncodeBuffer, value: Date): void => {
 	buffer.buffer[buffer.offset++] = value.getHours()
 	buffer.buffer[buffer.offset++] = value.getMinutes()
 	buffer.buffer[buffer.offset++] = value.getSeconds()
-	buffer.buffer[buffer.offset++] = Math.round(value.getMilliseconds() / 10)
+	buffer.buffer[buffer.offset++] = Math.min(
+		99,
+		Math.round(value.getMilliseconds() / 10),
+	)
 }
 
 export const encodeApplicationTime = (
@@ -1531,7 +1534,7 @@ export const decodeBacnetTime = (
 	const sec = buffer[offset + 2]
 	let hundredths = buffer[offset + 3]
 	if (hour !== 0xff || min !== 0xff || sec !== 0xff || hundredths !== 0xff) {
-		if (hundredths > 100) hundredths = 0
+		if (hundredths >= 100) hundredths = 0
 		value.setHours(hour)
 		value.setMinutes(min)
 		value.setSeconds(sec)
