@@ -129,6 +129,134 @@ test.describe('bacnet - client', () => {
 		assert.deepStrictEqual(events, expected.events)
 	})
 
+	test('getEventInformation should request additional pages when moreEvents is true', async () => {
+		const client = Object.create(BACnetClient.prototype) as BACnetClient & {
+			_requestManager: { add: (invokeId: number) => Promise<any> }
+			_getInvokeId: () => number
+			_getApduBuffer: () => { buffer: Buffer; offset: number }
+			sendBvlc: (
+				receiver: { address: string } | null,
+				buffer: { buffer: Buffer; offset: number },
+			) => void
+		}
+		const sentRequests: Buffer[] = []
+		const receiver = { address: '127.0.0.1' }
+
+		const response1 = {
+			buffer: Buffer.alloc(1482),
+			offset: 0,
+		}
+		GetEventInformation.encodeAcknowledge(
+			response1,
+			[
+				{
+					objectId: { type: 0, instance: 101 },
+					eventState: EventState.NORMAL,
+					acknowledgedTransitions: { value: [1], bitsUsed: 3 },
+					eventTimeStamps: [
+						{ type: TimeStamp.SEQUENCE_NUMBER, value: 1 },
+						{ type: TimeStamp.SEQUENCE_NUMBER, value: 2 },
+						{ type: TimeStamp.SEQUENCE_NUMBER, value: 3 },
+					],
+					notifyType: NotifyType.EVENT,
+					eventEnable: { value: [7], bitsUsed: 3 },
+					eventPriorities: [1, 2, 3],
+				},
+			],
+			true,
+		)
+
+		const response2 = {
+			buffer: Buffer.alloc(1482),
+			offset: 0,
+		}
+		GetEventInformation.encodeAcknowledge(
+			response2,
+			[
+				{
+					objectId: { type: 0, instance: 102 },
+					eventState: EventState.NORMAL,
+					acknowledgedTransitions: { value: [1], bitsUsed: 3 },
+					eventTimeStamps: [
+						{ type: TimeStamp.SEQUENCE_NUMBER, value: 4 },
+						{ type: TimeStamp.SEQUENCE_NUMBER, value: 5 },
+						{ type: TimeStamp.SEQUENCE_NUMBER, value: 6 },
+					],
+					notifyType: NotifyType.EVENT,
+					eventEnable: { value: [7], bitsUsed: 3 },
+					eventPriorities: [1, 2, 3],
+				},
+			],
+			false,
+		)
+
+		let callCount = 0
+		client._getInvokeId = () => 40 + callCount
+		client._getApduBuffer = () => ({
+			buffer: Buffer.alloc(1482),
+			offset: 4,
+		})
+		client.sendBvlc = (_receiver, buffer) => {
+			sentRequests.push(
+				Buffer.from(buffer.buffer.subarray(0, buffer.offset)),
+			)
+		}
+		client._requestManager = {
+			add: async () => {
+				callCount += 1
+				if (callCount === 1) {
+					return {
+						buffer: response1.buffer,
+						offset: 0,
+						length: response1.offset,
+					}
+				}
+				return {
+					buffer: response2.buffer,
+					offset: 0,
+					length: response2.offset,
+				}
+			},
+		}
+
+		const events = await client.getEventInformation(receiver)
+		assert.strictEqual(events.length, 2)
+		assert.strictEqual(sentRequests.length, 2)
+
+		const firstReq = sentRequests[0]
+		assert.ok(firstReq)
+		const firstNpdu = baNpdu.decode(firstReq, 4)
+		assert.ok(firstNpdu)
+		const firstApdu = baApdu.decodeConfirmedServiceRequest(
+			firstReq,
+			4 + firstNpdu.len,
+		)
+		const firstPayloadOffset = 4 + firstNpdu.len + firstApdu.len
+		const firstReqDecoded = GetEventInformation.decode(
+			firstReq,
+			firstPayloadOffset,
+		)
+		assert.strictEqual(firstReqDecoded.lastReceivedObjectId, null)
+
+		const secondReq = sentRequests[1]
+		assert.ok(secondReq)
+		const secondNpdu = baNpdu.decode(secondReq, 4)
+		assert.ok(secondNpdu)
+		const secondApdu = baApdu.decodeConfirmedServiceRequest(
+			secondReq,
+			4 + secondNpdu.len,
+		)
+		const secondPayloadOffset = 4 + secondNpdu.len + secondApdu.len
+		const secondReqDecoded = GetEventInformation.decode(
+			secondReq,
+			secondPayloadOffset,
+		)
+		assert.deepStrictEqual(secondReqDecoded.lastReceivedObjectId, {
+			type: 0,
+			instance: 101,
+		})
+	})
+
 	test('registerForeignDevice should send BVLC register and resolve on success result', async () => {
 		const client = Object.create(BACnetClient.prototype) as BACnetClient & {
 			_settings: { apduTimeout: number }
