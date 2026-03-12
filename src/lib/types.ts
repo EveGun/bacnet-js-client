@@ -517,6 +517,7 @@ export interface ClientOptions {
 	broadcastAddress?: string
 	apduTimeout?: number
 	reuseAddr?: boolean
+	abortOnSegmentedResponseWhenNoSegAccepted?: boolean
 }
 
 export interface WhoIsOptions {
