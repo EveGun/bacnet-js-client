@@ -94,4 +94,39 @@ test.describe('bacnet - Services layer AlarmAcknowledge unit', () => {
 			acknowledgeTimeStamp: ackTime,
 		})
 	})
+
+	test('should decode correctly when payload starts at non-zero offset', () => {
+		const ack = utils.getBuffer()
+		const eventTime = new Date(ZERO_DATE)
+		eventTime.setHours(12, 1, 2, 130)
+		const ackTime = new Date(ZERO_DATE)
+		ackTime.setHours(13, 2, 3, 140)
+		AlarmAcknowledge.encode(
+			ack,
+			77,
+			{ type: 2, instance: 44 },
+			3,
+			'Ack Source',
+			{ value: eventTime, type: TimeStamp.TIME },
+			{ value: ackTime, type: TimeStamp.TIME },
+		)
+
+		const prefix = Buffer.from([0xaa, 0xbb, 0xcc])
+		const combined = Buffer.concat([prefix, ack.buffer.slice(0, ack.offset)])
+		const result = AlarmAcknowledge.decode(
+			combined,
+			prefix.length,
+			ack.offset,
+		)
+		delete result.len
+
+		assert.deepStrictEqual(result, {
+			acknowledgedProcessId: 77,
+			eventObjectId: { type: 2, instance: 44 },
+			eventStateAcknowledged: 3,
+			acknowledgeSource: 'Ack Source',
+			eventTimeStamp: eventTime,
+			acknowledgeTimeStamp: ackTime,
+		})
+	})
 })

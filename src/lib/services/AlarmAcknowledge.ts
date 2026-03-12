@@ -116,7 +116,7 @@ export default class AlarmAcknowledge extends BacnetService {
 		decodedValue = baAsn1.decodeCharacterString(
 			buffer,
 			offset + len,
-			apduLen - (offset + len),
+			apduLen - len,
 			result.value,
 		)
 		value.acknowledgeSource = decodedValue.value
