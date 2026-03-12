@@ -742,6 +742,10 @@ export interface EventNotificationPayload extends BasicServicePayload {
 	ackRequired: boolean
 	fromState: number
 	toState: number
+	/**
+	 * Decoded notification parameters in BACnet application-data form.
+	 * Use `EventNotifyDataParams` for event-type-specific decoded fields.
+	 */
 	eventValues: BACNetAppData[]
 }
 
@@ -795,6 +799,10 @@ export interface EnrollmentSummaryAcknowledge {
 }
 
 export interface EventNotifyDataParams {
+	/**
+	 * Core fields from `BACnetEventNotificationData`. The optional `event*` groups
+	 * below are populated according to `eventType`.
+	 */
 	processId: number
 	initiatingObjectId: {
 		type: number
@@ -859,7 +867,10 @@ export interface EventNotifyDataParams {
 	unsignedRangeStatusFlags?: BACNetBitString
 	unsignedRangeExceededLimit?: number
 
-	// raw BACnetNotificationParameters payload (includes choice tag(s))
+	/**
+	 * Raw `BACnetNotificationParameters` payload including the original choice tag.
+	 * This can be used by callers that need vendor-specific post-processing.
+	 */
 	eventValuesRaw?: Buffer
 
 	// COMMAND_FAILURE
@@ -925,6 +936,7 @@ export interface EventNotifyDataParams {
 }
 
 export interface EventNotifyDataResult extends EventNotifyDataParams {
+	/** Bytes consumed while decoding the EventNotification payload. */
 	len: number
 }
 
