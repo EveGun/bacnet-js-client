@@ -337,14 +337,9 @@ export default class WriteProperty extends BacnetService {
 					'Could not encode: weekly schedule should be an array',
 				)
 			}
-			const isFullWeek =
-				values.length === 7 && values.every((entry) => Array.isArray(entry))
-			const day = isFullWeek
-				? (values as BACNetWeeklySchedulePayload)[arrayIndex - 1]
-				: (values as unknown as BACNetTimeValueEntry[])
 			WriteProperty.encodeWeeklyScheduleDay(
 				buffer,
-				day,
+				values as unknown as BACNetTimeValueEntry[],
 				`weekly schedule day ${arrayIndex - 1}`,
 			)
 			return
@@ -522,9 +517,15 @@ export default class WriteProperty extends BacnetService {
 			const entry = Array.isArray(values)
 				? values[arrayIndex - 1]
 				: values
+			if (entry == null) {
+				throw new Error(
+					'Could not encode: effective period entry is missing for the selected index',
+				)
+			}
 			if (
-				WriteProperty.hasTypeAndValue(entry) &&
-				entry.type === ApplicationTag.UNSIGNED_INTEGER
+				typeof entry === 'number' ||
+				(WriteProperty.hasTypeAndValue(entry) &&
+					entry.type === ApplicationTag.UNSIGNED_INTEGER)
 			) {
 				throw new Error(
 					'Could not encode: effective period entry must be a date',
