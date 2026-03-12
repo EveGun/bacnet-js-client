@@ -15,7 +15,7 @@ test.describe('bacnet - acknowledgeAlarm integration', () => {
 				'Alarm Acknowledge Test',
 				{ value: new Date(), type: 2 },
 				{ value: new Date(), type: 2 },
-				{},
+				{ acknowledgingProcessId: 57 },
 			),
 			(err: Error) => {
 				assert.strictEqual(err.message, 'ERR_TIMEOUT')

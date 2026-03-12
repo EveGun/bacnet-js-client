@@ -92,6 +92,7 @@ import {
 	EnrollmentOptions,
 	EnrollmentSummaryAcknowledge,
 	EventNotifyDataParams,
+	AcknowledgeAlarmOptions,
 } from './types'
 import { format } from 'util'
 import {
@@ -2085,8 +2086,12 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		ackText: string,
 		evTimeStamp: BACNetTimestamp,
 		ackTimeStamp: BACNetTimestamp,
-		options: ServiceOptions = {},
+		options: AcknowledgeAlarmOptions = {},
 	): Promise<void> {
+		if (options.acknowledgingProcessId == null) {
+			throw new Error('ACKNOWLEDGING_PROCESS_ID_REQUIRED')
+		}
+
 		const settings: ServiceOptions = {
 			maxSegments:
 				(options as ServiceOptions).maxSegments ||
@@ -2115,7 +2120,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		)
 		AlarmAcknowledge.encode(
 			buffer,
-			57,
+			options.acknowledgingProcessId,
 			objectId,
 			eventState,
 			ackText,

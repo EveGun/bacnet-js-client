@@ -541,6 +541,10 @@ export interface ServiceOptions {
 	invokeId?: number
 }
 
+export interface AcknowledgeAlarmOptions extends ServiceOptions {
+	acknowledgingProcessId?: number
+}
+
 export interface ReadPropertyOptions extends ServiceOptions {
 	arrayIndex?: number
 }
