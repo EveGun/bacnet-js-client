@@ -214,6 +214,33 @@ test.describe('bacnet - Services layer WritePropertyMultiple unit', () => {
 		assert.equal(cleanResult.values[0].value[0].value, 7)
 	})
 
+	test('should encode weekly schedule index 0 array size from app-data wrapper', () => {
+		const buffer = utils.getBuffer()
+		WritePropertyMultiple.encode(
+			buffer,
+			{ type: ObjectType.SCHEDULE, instance: 1 },
+			[
+				{
+					property: {
+						id: PropertyIdentifier.WEEKLY_SCHEDULE,
+						index: 0,
+					},
+					value: [{ type: ApplicationTag.UNSIGNED_INTEGER, value: 7 }] as any,
+					priority: 0,
+				},
+			],
+		)
+		const result = WritePropertyMultiple.decode(
+			buffer.buffer,
+			0,
+			buffer.offset,
+		)
+		const cleanResult = removeLen(result)
+		assert.equal(cleanResult.values[0].property.index, 0)
+		assert.equal(cleanResult.values[0].value[0].type, ApplicationTag.UNSIGNED_INTEGER)
+		assert.equal(cleanResult.values[0].value[0].value, 7)
+	})
+
 	test('should encode and decode weekly schedule through write-property-multiple', () => {
 		const buffer = utils.getBuffer()
 		const weekly = [

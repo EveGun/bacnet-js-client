@@ -339,6 +339,25 @@ test.describe('WriteProperty schedule/calendar compatibility', () => {
 		assert.equal(result.value.value[0].value, 7)
 	})
 
+	test('should encode weekly schedule array size from app-data wrapper when array index is 0', () => {
+		const buffer = utils.getBuffer()
+		WriteProperty.encode(
+			buffer,
+			ObjectType.SCHEDULE,
+			0,
+			PropertyIdentifier.WEEKLY_SCHEDULE,
+			0,
+			0,
+			[{ type: ApplicationTag.UNSIGNED_INTEGER, value: 7 }] as any,
+		)
+		const result = WriteProperty.decode(buffer.buffer, 0, buffer.offset)
+		assert.ok(result)
+		assert.equal(result.value.property.id, PropertyIdentifier.WEEKLY_SCHEDULE)
+		assert.equal(result.value.property.index, 0)
+		assert.equal(result.value.value[0].type, ApplicationTag.UNSIGNED_INTEGER)
+		assert.equal(result.value.value[0].value, 7)
+	})
+
 	test('should encode single weekly schedule day when array index is set', () => {
 		const buffer = utils.getBuffer()
 		const monday = [

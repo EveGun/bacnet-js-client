@@ -269,7 +269,16 @@ export default class WriteProperty extends BacnetService {
 		) {
 			length = values.value as number
 		} else if (Array.isArray(values)) {
-			length = values.length
+			const first = values[0]
+			if (
+				values.length === 1 &&
+				WriteProperty.hasTypeAndValue(first) &&
+				first.type === ApplicationTag.UNSIGNED_INTEGER
+			) {
+				length = first.value as number
+			} else {
+				length = values.length
+			}
 		}
 		if (!Number.isInteger(length) || length! < 0) {
 			throw new Error(
