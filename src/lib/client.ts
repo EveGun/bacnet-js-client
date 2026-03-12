@@ -2016,44 +2016,63 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			maxApdu:
 				(options as ServiceOptions).maxApdu ||
 				MaxApduLengthAccepted.OCTETS_1476,
-			invokeId:
-				(options as ServiceOptions).invokeId || this._getInvokeId(),
 		}
-		const buffer = this._getApduBuffer(receiver)
-		baNpdu.encode(
-			buffer,
-			NpduControlPriority.NORMAL_MESSAGE | NpduControlBit.EXPECTING_REPLY,
-			receiver,
-		)
-		baApdu.encodeConfirmedServiceRequest(
-			buffer,
-			PduType.CONFIRMED_REQUEST,
-			ConfirmedServiceChoice.GET_EVENT_INFORMATION,
-			settings.maxSegments,
-			settings.maxApdu,
-			settings.invokeId,
-			0,
-			0,
-		)
-		if (objectId) {
-			baAsn1.encodeContextObjectId(
+		const events: BACNetEventInformation[] = []
+		let lastReceivedObjectId = objectId ?? null
+		const maxPages = 1024
+
+		for (let page = 0; page < maxPages; page++) {
+			const invokeId =
+				page === 0 && options.invokeId != null
+					? options.invokeId
+					: this._getInvokeId()
+			const buffer = this._getApduBuffer(receiver)
+			baNpdu.encode(
 				buffer,
-				0,
-				objectId.type,
-				objectId.instance,
+				NpduControlPriority.NORMAL_MESSAGE |
+					NpduControlBit.EXPECTING_REPLY,
+				receiver,
 			)
+			baApdu.encodeConfirmedServiceRequest(
+				buffer,
+				PduType.CONFIRMED_REQUEST,
+				ConfirmedServiceChoice.GET_EVENT_INFORMATION,
+				settings.maxSegments,
+				settings.maxApdu,
+				invokeId,
+				0,
+				0,
+			)
+			if (lastReceivedObjectId) {
+				baAsn1.encodeContextObjectId(
+					buffer,
+					0,
+					lastReceivedObjectId.type,
+					lastReceivedObjectId.instance,
+				)
+			}
+			this.sendBvlc(receiver, buffer)
+			const data = await this._requestManager.add(invokeId)
+			const result = GetEventInformation.decodeAcknowledge(
+				data.buffer,
+				data.offset,
+				data.length,
+			)
+			if (!result) {
+				throw new Error('INVALID_DECODING')
+			}
+			events.push(...result.events)
+			if (!result.moreEvents) {
+				return events
+			}
+			const lastEvent = result.events[result.events.length - 1]
+			if (!lastEvent?.objectId) {
+				throw new Error('INVALID_DECODING')
+			}
+			lastReceivedObjectId = lastEvent.objectId
 		}
-		this.sendBvlc(receiver, buffer)
-		const data = await this._requestManager.add(settings.invokeId)
-		const result = GetEventInformation.decodeAcknowledge(
-			data.buffer,
-			data.offset,
-			data.length,
-		)
-		if (!result) {
-			throw new Error('INVALID_DECODING')
-		}
-		return result.events
+
+		throw new Error('TOO_MANY_EVENT_PAGES')
 	}
 
 	/**
