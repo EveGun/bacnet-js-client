@@ -2092,9 +2092,9 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		ackText: string,
 		evTimeStamp: BACNetTimestamp,
 		ackTimeStamp: BACNetTimestamp,
-		options: AcknowledgeAlarmOptions = {},
+		options: AcknowledgeAlarmOptions,
 	): Promise<void> {
-		if (options.acknowledgingProcessId == null) {
+		if (!options || options.acknowledgingProcessId == null) {
 			throw new Error('ACKNOWLEDGING_PROCESS_ID_REQUIRED')
 		}
 
