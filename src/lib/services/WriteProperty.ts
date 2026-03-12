@@ -461,6 +461,11 @@ export default class WriteProperty extends BacnetService {
 					`Could not encode: exception schedule entry ${index} events must be an array`,
 				)
 			}
+			if (!events || events.length === 0) {
+				throw new Error(
+					`Could not encode: exception schedule entry ${index} must have at least one event`,
+				)
+			}
 			baAsn1.encodeOpeningTag(buffer, 2)
 			for (const [eventIndex, event] of (events || []).entries()) {
 				const timeValue = WriteProperty.normalizeTimeInput(

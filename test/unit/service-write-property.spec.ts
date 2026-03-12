@@ -810,19 +810,27 @@ test.describe('WriteProperty schedule/calendar compatibility', () => {
 		const buffer = utils.getBuffer()
 		const payload = [
 			{
-				date: {
-					type: ApplicationTag.DATERANGE,
-					value: [
+					date: {
+						type: ApplicationTag.DATERANGE,
+						value: [
+							{
+								type: ApplicationTag.DATE,
+								value: new Date(2024, 11, 4),
+							},
+						],
+					},
+					events: [
 						{
-							type: ApplicationTag.DATE,
-							value: new Date(2024, 11, 4),
+							time: new Date(2024, 11, 4, 12, 0, 0),
+							value: {
+								type: ApplicationTag.UNSIGNED_INTEGER,
+								value: 1,
+							},
 						},
 					],
+					priority: { type: ApplicationTag.UNSIGNED_INTEGER, value: 16 },
 				},
-				events: [],
-				priority: { type: ApplicationTag.UNSIGNED_INTEGER, value: 16 },
-			},
-		]
+			]
 
 		assert.throws(() => {
 			WriteProperty.encode(
@@ -841,13 +849,21 @@ test.describe('WriteProperty schedule/calendar compatibility', () => {
 		const buffer = utils.getBuffer()
 		const payload = [
 			{
-				date: {
-					type: ApplicationTag.DATE,
-					value: new Date(2024, 11, 4),
+					date: {
+						type: ApplicationTag.DATE,
+						value: new Date(2024, 11, 4),
+					},
+					events: [
+						{
+							time: new Date(2024, 11, 4, 12, 0, 0),
+							value: {
+								type: ApplicationTag.UNSIGNED_INTEGER,
+								value: 1,
+							},
+						},
+					],
 				},
-				events: [],
-			},
-		]
+			]
 
 		assert.throws(() => {
 			WriteProperty.encode(
@@ -866,14 +882,22 @@ test.describe('WriteProperty schedule/calendar compatibility', () => {
 		const buffer = utils.getBuffer()
 		const payload = [
 			{
-				date: {
-					type: ApplicationTag.DATE,
-					value: new Date(2024, 11, 4),
+					date: {
+						type: ApplicationTag.DATE,
+						value: new Date(2024, 11, 4),
+					},
+					events: [
+						{
+							time: new Date(2024, 11, 4, 12, 0, 0),
+							value: {
+								type: ApplicationTag.UNSIGNED_INTEGER,
+								value: 1,
+							},
+						},
+					],
+					priority: { type: ApplicationTag.UNSIGNED_INTEGER, value: 0 },
 				},
-				events: [],
-				priority: { type: ApplicationTag.UNSIGNED_INTEGER, value: 0 },
-			},
-		]
+			]
 
 		assert.throws(() => {
 			WriteProperty.encode(
