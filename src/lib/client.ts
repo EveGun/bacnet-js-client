@@ -991,7 +991,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			PduType.UNCONFIRMED_REQUEST,
 			UnconfirmedServiceChoice.UTC_TIME_SYNCHRONIZATION,
 		)
-		TimeSync.encode(buffer, dateTime)
+		TimeSync.encodeUtc(buffer, dateTime)
 		this.sendBvlc(receiver, buffer)
 	}
 

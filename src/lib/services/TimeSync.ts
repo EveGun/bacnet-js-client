@@ -9,6 +9,11 @@ export default class TimeSync extends BacnetService {
 		baAsn1.encodeApplicationTime(buffer, time)
 	}
 
+	public static encodeUtc(buffer: EncodeBuffer, time: Date) {
+		baAsn1.encodeApplicationDateUtc(buffer, time)
+		baAsn1.encodeApplicationTimeUtc(buffer, time)
+	}
+
 	public static decode(buffer: Buffer, offset: number) {
 		let len = 0
 		let result: any
