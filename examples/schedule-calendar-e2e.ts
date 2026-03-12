@@ -15,7 +15,6 @@ import Bacnet, {
 	type ReadAccessProperty,
 	type WritePropertyMultipleObject,
 } from '../src'
-import * as process from 'process'
 
 type Mode = 'smoke' | 'full'
 
@@ -303,24 +302,24 @@ function buildExceptionSchedule(
 	const entries: BACNetExceptionSchedulePayload = []
 	for (let i = 0; i < count; i++) {
 		const dateKind = i % 3
-		const date =
+		const date: BACNetExceptionSchedulePayload[number]['date'] =
 			dateKind === 0
-				? ({
+				? {
 						type: ApplicationTag.DATE,
 						value: new Date(2026, i % 12, (i % 27) + 1),
-				  } as const)
+				  }
 				: dateKind === 1
-					? ({
+					? {
 							type: ApplicationTag.DATERANGE,
 							value: [
 								{ type: ApplicationTag.DATE, value: new Date(2026, i % 12, 1) },
 								{ type: ApplicationTag.DATE, value: new Date(2026, i % 12, 15) },
 							],
-					  } as const)
-					: ({
+					  }
+					: {
 							type: ApplicationTag.WEEKNDAY,
 							value: { month: ((i % 12) + 1) as number, week: ((i % 4) + 1) as number, wday: ((i % 7) + 1) as number },
-					  } as const)
+					  }
 
 		const events: BACNetTimeValueEntry[] = []
 		for (let t = 0; t < tuplesPerEntry; t++) {
