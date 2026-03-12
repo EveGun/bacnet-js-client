@@ -542,6 +542,10 @@ export interface ServiceOptions {
 }
 
 export interface AcknowledgeAlarmOptions extends ServiceOptions {
+	/**
+	 * BACnet process identifier required by `AcknowledgeAlarm`.
+	 * This library now enforces it at runtime.
+	 */
 	acknowledgingProcessId?: number
 }
 

@@ -2004,6 +2004,9 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 
 	/**
 	 * Gets event information from a device.
+	 *
+	 * This method follows paged `GetEventInformation` responses automatically
+	 * while `moreEvents` is set by the remote device.
 	 */
 	async getEventInformation(
 		receiver: BACNetAddress,
@@ -2078,6 +2081,9 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 
 	/**
 	 * Acknowledges an alarm.
+	 *
+	 * `options.acknowledgingProcessId` is mandatory and the call will throw
+	 * `ACKNOWLEDGING_PROCESS_ID_REQUIRED` when it is omitted.
 	 */
 	async acknowledgeAlarm(
 		receiver: BACNetAddress,
