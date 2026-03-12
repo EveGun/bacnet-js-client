@@ -373,6 +373,50 @@ test.describe('ReadPropertyMultipleAcknowledge', () => {
 		assert.equal((day.value as any[])[0].value?.value, 23.25)
 	})
 
+	test('should honor requested weekly day when indexed RPM read returns full weekly payload', () => {
+		const buffer = utils.getBuffer()
+		baAsn1.encodeContextObjectId(buffer, 0, ObjectType.SCHEDULE, 1)
+		baAsn1.encodeOpeningTag(buffer, 1)
+		baAsn1.encodeContextEnumerated(
+			buffer,
+			2,
+			PropertyIdentifier.WEEKLY_SCHEDULE,
+		)
+		baAsn1.encodeContextUnsigned(buffer, 3, 3)
+		baAsn1.encodeOpeningTag(buffer, 4)
+		for (let i = 0; i < 2; i++) {
+			baAsn1.encodeOpeningTag(buffer, 0)
+			baAsn1.encodeClosingTag(buffer, 0)
+		}
+		baAsn1.encodeOpeningTag(buffer, 0)
+		baAsn1.bacappEncodeApplicationData(buffer, {
+			type: ApplicationTag.TIME,
+			value: new Date(2024, 0, 3, 10, 30, 0, 0),
+		})
+		baAsn1.bacappEncodeApplicationData(buffer, {
+			type: ApplicationTag.REAL,
+			value: 25.75,
+		})
+		baAsn1.encodeClosingTag(buffer, 0)
+		for (let i = 0; i < 4; i++) {
+			baAsn1.encodeOpeningTag(buffer, 0)
+			baAsn1.encodeClosingTag(buffer, 0)
+		}
+		baAsn1.encodeClosingTag(buffer, 4)
+		baAsn1.encodeClosingTag(buffer, 1)
+
+		const result = ReadPropertyMultiple.decodeAcknowledge(
+			buffer.buffer,
+			0,
+			buffer.offset,
+		)
+		assert.ok(result)
+		const day = result.values[0].values[0].value[0]
+		assert.equal(day.type, ApplicationTag.WEEKLY_SCHEDULE)
+		assert.equal((day.value as any[]).length, 1)
+		assert.equal((day.value as any[])[0].value?.value, 25.75)
+	})
+
 	test('should decode indexed exception schedule as array payload in RPM', () => {
 		const buffer = utils.getBuffer()
 		baAsn1.encodeContextObjectId(buffer, 0, ObjectType.SCHEDULE, 1)

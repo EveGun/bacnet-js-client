@@ -1053,6 +1053,24 @@ export const encodeReadAccessResult = (
 	encodeClosingTag(buffer, 1)
 }
 
+const pickIndexedWeeklyDay = (
+	days: unknown[],
+	arrayIndex: number,
+): unknown[] | undefined => {
+	if (days.length === 0) return undefined
+	const allDays = days.every((d) => Array.isArray(d))
+	if (!allDays) return undefined
+	const idx = arrayIndex - 1
+	if (idx >= 0 && idx < days.length) {
+		const requested = days[idx] as unknown[]
+		if (requested.length > 0) return requested
+	}
+	const nonEmptyDays = (days as unknown[][]).filter((d) => d.length > 0)
+	// Many devices return a single indexed day payload encoded as day[0] only.
+	if (nonEmptyDays.length <= 1) return days[0] as unknown[]
+	return idx >= 0 && idx < days.length ? (days[idx] as unknown[]) : undefined
+}
+
 export const decodeReadAccessResult = (
 	buffer: Buffer,
 	offset: number,
@@ -1168,12 +1186,10 @@ export const decodeReadAccessResult = (
 				if (!decodedWeekly || !Array.isArray(decodedWeekly.value)) {
 					return undefined
 				}
-				const nonEmptyWeeklyDays = decodedWeekly.value.filter(
-					(day) => Array.isArray(day) && day.length > 0,
+				const selectedWeekly = pickIndexedWeeklyDay(
+					decodedWeekly.value as unknown[],
+					newEntry.index,
 				)
-				const weeklyIdx =
-					nonEmptyWeeklyDays.length <= 1 ? 0 : newEntry.index - 1
-				const selectedWeekly = decodedWeekly.value[weeklyIdx]
 				if (!Array.isArray(selectedWeekly)) return undefined
 				newEntry.value = [
 					{

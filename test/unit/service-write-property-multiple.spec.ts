@@ -291,6 +291,50 @@ test.describe('bacnet - Services layer WritePropertyMultiple unit', () => {
 		assert.equal((value.value as any[])[0][0].value?.value, 21.5)
 	})
 
+	test('should honor requested indexed weekly day in write-property-multiple decode', () => {
+		const buffer = utils.getBuffer()
+		baAsn1.encodeContextObjectId(buffer, 0, ObjectType.SCHEDULE, 1)
+		baAsn1.encodeOpeningTag(buffer, 1)
+		baAsn1.encodeContextEnumerated(
+			buffer,
+			0,
+			PropertyIdentifier.WEEKLY_SCHEDULE,
+		)
+		baAsn1.encodeContextUnsigned(buffer, 1, 3)
+		baAsn1.encodeOpeningTag(buffer, 2)
+		for (let i = 0; i < 2; i++) {
+			baAsn1.encodeOpeningTag(buffer, 0)
+			baAsn1.encodeClosingTag(buffer, 0)
+		}
+		baAsn1.encodeOpeningTag(buffer, 0)
+		baAsn1.bacappEncodeApplicationData(buffer, {
+			type: ApplicationTag.TIME,
+			value: new Date(2024, 0, 3, 7, 45, 0, 0),
+		})
+		baAsn1.bacappEncodeApplicationData(buffer, {
+			type: ApplicationTag.REAL,
+			value: 26.5,
+		})
+		baAsn1.encodeClosingTag(buffer, 0)
+		for (let i = 0; i < 4; i++) {
+			baAsn1.encodeOpeningTag(buffer, 0)
+			baAsn1.encodeClosingTag(buffer, 0)
+		}
+		baAsn1.encodeClosingTag(buffer, 2)
+		baAsn1.encodeClosingTag(buffer, 1)
+
+		const result = WritePropertyMultiple.decode(
+			buffer.buffer,
+			0,
+			buffer.offset,
+		)
+		assert.ok(result)
+		const value = result.values[0].value[0]
+		assert.equal(value.type, ApplicationTag.WEEKLY_SCHEDULE)
+		assert.equal((value.value as any[]).length, 1)
+		assert.equal((value.value as any[])[0].value?.value, 26.5)
+	})
+
 	test('should reject indexed effective period in write-property-multiple encode', () => {
 		const buffer = utils.getBuffer()
 		assert.throws(() => {
