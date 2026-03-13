@@ -203,6 +203,40 @@ test.describe('bacnet - Services layer WriteProperty unit', () => {
 			},
 		})
 	})
+
+	test('should encode and decode timer state change values payload', () => {
+		const buffer = utils.getBuffer()
+		WriteProperty.encode(
+			buffer,
+			ObjectType.TIMER,
+			7,
+			PropertyIdentifier.STATE_CHANGE_VALUES,
+			0xffffffff,
+			0,
+			[
+				{ type: ApplicationTag.NULL, value: null },
+				{ type: ApplicationTag.BOOLEAN, value: true },
+				{ type: ApplicationTag.UNSIGNED_INTEGER, value: 12 },
+				{ type: ApplicationTag.SIGNED_INTEGER, value: -2 },
+				{ type: ApplicationTag.REAL, value: 1.5 },
+				{ type: ApplicationTag.ENUMERATED, value: 3 },
+				{
+					type: ApplicationTag.TIME,
+					value: new Date(2024, 0, 1, 9, 0, 0, 0),
+				},
+			],
+		)
+		const result = WriteProperty.decode(buffer.buffer, 0, buffer.offset)
+		assert.ok(result)
+		assert.equal(result.objectId.type, ObjectType.TIMER)
+		assert.equal(
+			result.value.property.id,
+			PropertyIdentifier.STATE_CHANGE_VALUES,
+		)
+		assert.equal(result.value.value.length, 7)
+		assert.equal(result.value.value[1].type, ApplicationTag.BOOLEAN)
+		assert.equal(result.value.value[1].value, true)
+	})
 })
 
 test.describe('WriteProperty schedule/calendar compatibility', () => {
@@ -284,6 +318,98 @@ test.describe('WriteProperty schedule/calendar compatibility', () => {
 		assert.equal(sunday[0].time?.value.getMinutes(), 15)
 		assert.equal(sunday[0].value?.type, ApplicationTag.UNSIGNED_INTEGER)
 		assert.equal(sunday[0].value?.value, 1)
+	})
+
+	test('should encode weekly schedule array size when array index is 0', () => {
+		const buffer = utils.getBuffer()
+		WriteProperty.encode(
+			buffer,
+			ObjectType.SCHEDULE,
+			0,
+			PropertyIdentifier.WEEKLY_SCHEDULE,
+			0,
+			0,
+			7 as any,
+		)
+		const result = WriteProperty.decode(buffer.buffer, 0, buffer.offset)
+		assert.ok(result)
+		assert.equal(
+			result.value.property.id,
+			PropertyIdentifier.WEEKLY_SCHEDULE,
+		)
+		assert.equal(result.value.property.index, 0)
+		assert.equal(
+			result.value.value[0].type,
+			ApplicationTag.UNSIGNED_INTEGER,
+		)
+		assert.equal(result.value.value[0].value, 7)
+	})
+
+	test('should encode weekly schedule array size from app-data wrapper when array index is 0', () => {
+		const buffer = utils.getBuffer()
+		WriteProperty.encode(
+			buffer,
+			ObjectType.SCHEDULE,
+			0,
+			PropertyIdentifier.WEEKLY_SCHEDULE,
+			0,
+			0,
+			[{ type: ApplicationTag.UNSIGNED_INTEGER, value: 7 }] as any,
+		)
+		const result = WriteProperty.decode(buffer.buffer, 0, buffer.offset)
+		assert.ok(result)
+		assert.equal(
+			result.value.property.id,
+			PropertyIdentifier.WEEKLY_SCHEDULE,
+		)
+		assert.equal(result.value.property.index, 0)
+		assert.equal(
+			result.value.value[0].type,
+			ApplicationTag.UNSIGNED_INTEGER,
+		)
+		assert.equal(result.value.value[0].value, 7)
+	})
+
+	test('should encode single weekly schedule day when array index is set', () => {
+		const buffer = utils.getBuffer()
+		const monday = [
+			{
+				time: {
+					type: ApplicationTag.TIME,
+					value: new Date(2024, 0, 1, 9, 45),
+				},
+				value: { type: ApplicationTag.REAL, value: 20.25 },
+			},
+		]
+		WriteProperty.encode(
+			buffer,
+			ObjectType.SCHEDULE,
+			0,
+			PropertyIdentifier.WEEKLY_SCHEDULE,
+			1,
+			0,
+			monday as any,
+		)
+		const result = WriteProperty.decode(buffer.buffer, 0, buffer.offset)
+		assert.ok(result)
+		assert.equal(result.value.property.index, 1)
+
+		let payloadOffset = -1
+		for (let i = 0; i < buffer.offset; i++) {
+			if (baAsn1.decodeIsOpeningTagNumber(buffer.buffer, i, 3)) {
+				payloadOffset = i + 1
+				break
+			}
+		}
+		assert.notEqual(payloadOffset, -1)
+		const weekly = baAsn1.decodeWeeklySchedule(
+			buffer.buffer,
+			payloadOffset,
+			buffer.offset - payloadOffset,
+		)
+		assert.ok(weekly)
+		assert.equal(weekly.value[0].length, 1)
+		assert.equal(weekly.value[0][0].value?.value, 20.25)
 	})
 
 	test('should reject weekly schedule payload with more than seven days', () => {
@@ -401,6 +527,25 @@ test.describe('WriteProperty schedule/calendar compatibility', () => {
 				],
 				priority: { type: ApplicationTag.UNSIGNED_INTEGER, value: 8 },
 			},
+			{
+				date: {
+					type: ApplicationTag.OBJECTIDENTIFIER,
+					value: {
+						type: ObjectType.CALENDAR,
+						instance: 4,
+					},
+				},
+				events: [
+					{
+						time: {
+							type: ApplicationTag.TIME,
+							value: new Date(2024, 11, 4, 7, 45),
+						},
+						value: { type: ApplicationTag.NULL, value: null },
+					},
+				],
+				priority: { type: ApplicationTag.UNSIGNED_INTEGER, value: 4 },
+			},
 		]
 
 		WriteProperty.encode(
@@ -435,10 +580,11 @@ test.describe('WriteProperty schedule/calendar compatibility', () => {
 			buffer.offset - payloadOffset,
 		)
 		assert.ok(exceptionSchedule)
-		assert.equal(exceptionSchedule.value.length, 2)
+		assert.equal(exceptionSchedule.value.length, 3)
 
 		const first = exceptionSchedule.value[0]
 		const second = exceptionSchedule.value[1]
+		const third = exceptionSchedule.value[2]
 
 		assert.equal(first.date?.type, ApplicationTag.DATE)
 		assert.equal(first.events.length, 1)
@@ -458,6 +604,65 @@ test.describe('WriteProperty schedule/calendar compatibility', () => {
 		assert.equal(second.events[0].value?.type, ApplicationTag.ENUMERATED)
 		assert.equal(second.events[0].value?.value, 4)
 		assert.equal(second.priority?.value, 8)
+
+		assert.equal(third.date?.type, ApplicationTag.OBJECTIDENTIFIER)
+		assert.deepStrictEqual(third.date?.value, {
+			type: ObjectType.CALENDAR,
+			instance: 4,
+		})
+		assert.equal(third.events.length, 1)
+		assert.equal(third.events[0].value?.type, ApplicationTag.NULL)
+		assert.equal(third.priority?.value, 4)
+	})
+
+	test('should encode single exception schedule entry when array index is set', () => {
+		const buffer = utils.getBuffer()
+		const entry = {
+			date: {
+				type: ApplicationTag.DATE,
+				value: new Date(2024, 11, 4),
+			},
+			events: [
+				{
+					time: {
+						type: ApplicationTag.TIME,
+						value: new Date(2024, 11, 4, 0, 0),
+					},
+					value: { type: ApplicationTag.REAL, value: 3.5 },
+				},
+			],
+			priority: { type: ApplicationTag.UNSIGNED_INTEGER, value: 8 },
+		}
+		WriteProperty.encode(
+			buffer,
+			ObjectType.SCHEDULE,
+			0,
+			PropertyIdentifier.EXCEPTION_SCHEDULE,
+			1,
+			0,
+			entry as any,
+		)
+
+		const result = WriteProperty.decode(buffer.buffer, 0, buffer.offset)
+		assert.ok(result)
+		assert.equal(result.value.property.index, 1)
+
+		let payloadOffset = -1
+		for (let i = 0; i < buffer.offset; i++) {
+			if (baAsn1.decodeIsOpeningTagNumber(buffer.buffer, i, 3)) {
+				payloadOffset = i + 1
+				break
+			}
+		}
+		assert.notEqual(payloadOffset, -1)
+		const exceptionSchedule = baAsn1.decodeExceptionSchedule(
+			buffer.buffer,
+			payloadOffset,
+			buffer.offset - payloadOffset,
+		)
+		assert.ok(exceptionSchedule)
+		assert.equal(exceptionSchedule.value.length, 1)
+		assert.equal(exceptionSchedule.value[0].events[0].value?.value, 3.5)
 	})
 
 	test('should reject exception schedule payload when values is not an array', () => {
@@ -645,7 +850,15 @@ test.describe('WriteProperty schedule/calendar compatibility', () => {
 						},
 					],
 				},
-				events: [],
+				events: [
+					{
+						time: new Date(2024, 11, 4, 12, 0, 0),
+						value: {
+							type: ApplicationTag.UNSIGNED_INTEGER,
+							value: 1,
+						},
+					},
+				],
 				priority: { type: ApplicationTag.UNSIGNED_INTEGER, value: 16 },
 			},
 		]
@@ -671,7 +884,15 @@ test.describe('WriteProperty schedule/calendar compatibility', () => {
 					type: ApplicationTag.DATE,
 					value: new Date(2024, 11, 4),
 				},
-				events: [],
+				events: [
+					{
+						time: new Date(2024, 11, 4, 12, 0, 0),
+						value: {
+							type: ApplicationTag.UNSIGNED_INTEGER,
+							value: 1,
+						},
+					},
+				],
 			},
 		]
 
@@ -696,7 +917,15 @@ test.describe('WriteProperty schedule/calendar compatibility', () => {
 					type: ApplicationTag.DATE,
 					value: new Date(2024, 11, 4),
 				},
-				events: [],
+				events: [
+					{
+						time: new Date(2024, 11, 4, 12, 0, 0),
+						value: {
+							type: ApplicationTag.UNSIGNED_INTEGER,
+							value: 1,
+						},
+					},
+				],
 				priority: { type: ApplicationTag.UNSIGNED_INTEGER, value: 0 },
 			},
 		]
@@ -734,6 +963,26 @@ test.describe('WriteProperty schedule/calendar compatibility', () => {
 		const hex = buffer.buffer.slice(0, buffer.offset).toString('hex')
 		assert.ok(hex.includes('a4'))
 		assert.ok(hex.includes('ffffffff'))
+	})
+
+	test('should reject indexed effective period payload', () => {
+		const buffer = utils.getBuffer()
+		const payload = [
+			{ type: ApplicationTag.DATE, value: new Date(2024, 0, 1) },
+			{ type: ApplicationTag.DATE, value: ZERO_DATE },
+		]
+
+		assert.throws(() => {
+			WriteProperty.encode(
+				buffer,
+				ObjectType.SCHEDULE,
+				0,
+				PropertyIdentifier.EFFECTIVE_PERIOD,
+				1,
+				0,
+				payload as any,
+			)
+		}, /effective period does not support indexed access/)
 	})
 
 	test('should reject effective period payload when values is not an array', () => {
@@ -890,6 +1139,24 @@ test.describe('WriteProperty schedule/calendar compatibility', () => {
 
 		assert.equal(third.type, ApplicationTag.WEEKNDAY)
 		assert.deepStrictEqual(third.value, { month: 2, week: 2, wday: 2 })
+	})
+
+	test('should reject indexed calendar date list payload', () => {
+		const buffer = utils.getBuffer()
+		const payload = [
+			{ type: ApplicationTag.DATE, value: new Date(2025, 7, 22) },
+		]
+		assert.throws(() => {
+			WriteProperty.encode(
+				buffer,
+				ObjectType.CALENDAR,
+				0,
+				PropertyIdentifier.DATE_LIST,
+				1,
+				0,
+				payload as any,
+			)
+		}, /calendar date list does not support indexed access/)
 	})
 
 	test('should reject calendar date list payload when values is not an array', () => {

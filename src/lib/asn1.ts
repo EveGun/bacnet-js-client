@@ -594,7 +594,7 @@ export const encodeReadAccessSpecification = (
 	encodeOpeningTag(buffer, 1)
 	value.properties.forEach((p) => {
 		encodeContextEnumerated(buffer, 0, p.id)
-		if (p.index && p.index !== ASN1_ARRAY_ALL) {
+		if (p.index !== undefined && p.index !== ASN1_ARRAY_ALL) {
 			encodeContextUnsigned(buffer, 1, p.index)
 		}
 	})
@@ -1053,6 +1053,24 @@ export const encodeReadAccessResult = (
 	encodeClosingTag(buffer, 1)
 }
 
+const pickIndexedWeeklyDay = (
+	days: unknown[],
+	arrayIndex: number,
+): unknown[] | undefined => {
+	if (days.length === 0) return undefined
+	const allDays = days.every((d) => Array.isArray(d))
+	if (!allDays) return undefined
+	const idx = arrayIndex - 1
+	if (idx >= 0 && idx < days.length) {
+		const requested = days[idx] as unknown[]
+		if (requested.length > 0) return requested
+	}
+	const nonEmptyDays = (days as unknown[][]).filter((d) => d.length > 0)
+	// Many devices return a single indexed day payload encoded as day[0] only.
+	if (nonEmptyDays.length <= 1) return days[0] as unknown[]
+	return idx >= 0 && idx < days.length ? (days[idx] as unknown[]) : undefined
+}
+
 export const decodeReadAccessResult = (
 	buffer: Buffer,
 	offset: number,
@@ -1113,63 +1131,228 @@ export const decodeReadAccessResult = (
 			newEntry.index = unsignedResult.value
 			len += unsignedResult.len
 		}
+		if (
+			value.objectId.type === ObjectType.SCHEDULE &&
+			newEntry.id === PropertyIdentifier.EFFECTIVE_PERIOD &&
+			newEntry.index !== ASN1_ARRAY_ALL
+		) {
+			return undefined
+		}
+		if (
+			value.objectId.type === ObjectType.CALENDAR &&
+			newEntry.id === PropertyIdentifier.DATE_LIST &&
+			newEntry.index !== ASN1_ARRAY_ALL
+		) {
+			return undefined
+		}
 
 		const tagResult3 = decodeTagNumberAndValue(buffer, offset + len)
 		len += tagResult3.len
 		if (tagResult3.tagNumber === 4) {
-			const localValues: ApplicationData[] = []
-			while (
-				len + offset <= buffer.length &&
-				!decodeIsClosingTagNumber(buffer, offset + len, 4)
+			let handledScheduleCalendar = false
+			if (
+				value.objectId.type === ObjectType.SCHEDULE &&
+				newEntry.id === PropertyIdentifier.WEEKLY_SCHEDULE &&
+				newEntry.index === ASN1_ARRAY_ALL
 			) {
-				const localResult = bacappDecodeApplicationData(
+				const decodedWeekly = decodeWeeklySchedule(
 					buffer,
 					offset + len,
-					apduLen + offset - 1,
-					value.objectId.type,
-					newEntry.id,
+					apduLen - len,
+					4,
 				)
-				if (!localResult) return undefined
-				len += localResult.len
-				const resObj: ApplicationData = {
-					value: localResult.value,
-					type: localResult.type,
-					len: localResult.len,
-					...(localResult.encoding !== undefined && {
-						encoding: localResult.encoding,
-					}),
-				}
-				localValues.push(resObj)
-			}
-			if (!decodeIsClosingTagNumber(buffer, offset + len, 4))
-				return undefined
-			if (
-				localValues.length === 2 &&
-				localValues[0].type === ApplicationTag.DATE &&
-				localValues[1].type === ApplicationTag.TIME
-			) {
-				const date = localValues[0].value as Date
-				const time = localValues[1].value as Date
-				const bdatetime = new Date(
-					date.getFullYear(),
-					date.getMonth(),
-					date.getDate(),
-					time.getHours(),
-					time.getMinutes(),
-					time.getSeconds(),
-					time.getMilliseconds(),
-				)
+				if (!decodedWeekly) return undefined
 				newEntry.value = [
 					{
-						type: ApplicationTag.DATETIME,
-						value: bdatetime,
-						len: localValues[1].len,
+						type: ApplicationTag.WEEKLY_SCHEDULE,
+						value: decodedWeekly.value,
+						len: decodedWeekly.len,
 					},
 				]
-			} else {
-				newEntry.value = localValues
+				len += decodedWeekly.len
+				handledScheduleCalendar = true
+			} else if (
+				value.objectId.type === ObjectType.SCHEDULE &&
+				newEntry.id === PropertyIdentifier.WEEKLY_SCHEDULE &&
+				newEntry.index !== ASN1_ARRAY_ALL &&
+				newEntry.index !== 0
+			) {
+				const decodedWeekly = decodeWeeklySchedule(
+					buffer,
+					offset + len,
+					apduLen - len,
+					4,
+				)
+				if (!decodedWeekly || !Array.isArray(decodedWeekly.value)) {
+					return undefined
+				}
+				const selectedWeekly = pickIndexedWeeklyDay(
+					decodedWeekly.value as unknown[],
+					newEntry.index,
+				)
+				if (!Array.isArray(selectedWeekly)) return undefined
+				newEntry.value = [
+					{
+						type: ApplicationTag.WEEKLY_SCHEDULE,
+						value: selectedWeekly,
+						len: decodedWeekly.len,
+					},
+				]
+				len += decodedWeekly.len
+				handledScheduleCalendar = true
+			} else if (
+				value.objectId.type === ObjectType.SCHEDULE &&
+				newEntry.id === PropertyIdentifier.EXCEPTION_SCHEDULE &&
+				newEntry.index === ASN1_ARRAY_ALL
+			) {
+				const decodedException = decodeExceptionSchedule(
+					buffer,
+					offset + len,
+					apduLen - len,
+					4,
+				)
+				if (!decodedException) return undefined
+				newEntry.value = [
+					{
+						type: ApplicationTag.SPECIAL_EVENT,
+						value: decodedException.value,
+						len: decodedException.len,
+					},
+				]
+				len += decodedException.len
+				handledScheduleCalendar = true
+			} else if (
+				value.objectId.type === ObjectType.SCHEDULE &&
+				newEntry.id === PropertyIdentifier.EXCEPTION_SCHEDULE &&
+				newEntry.index !== ASN1_ARRAY_ALL &&
+				newEntry.index !== 0
+			) {
+				const decodedException = decodeExceptionSchedule(
+					buffer,
+					offset + len,
+					apduLen - len,
+					4,
+				)
+				if (
+					!decodedException ||
+					!Array.isArray(decodedException.value)
+				) {
+					return undefined
+				}
+				const exceptionIdx =
+					decodedException.value.length === 1 ? 0 : newEntry.index - 1
+				const selectedException = decodedException.value[exceptionIdx]
+				if (selectedException == null) return undefined
+				newEntry.value = [
+					{
+						type: ApplicationTag.SPECIAL_EVENT,
+						value: [selectedException],
+						len: decodedException.len,
+					},
+				]
+				len += decodedException.len
+				handledScheduleCalendar = true
+			} else if (
+				value.objectId.type === ObjectType.SCHEDULE &&
+				newEntry.id === PropertyIdentifier.EFFECTIVE_PERIOD &&
+				newEntry.index === ASN1_ARRAY_ALL
+			) {
+				const decodedEffective = decodeScheduleEffectivePeriod(
+					buffer,
+					offset + len,
+					apduLen - len,
+					4,
+					4,
+				)
+				if (!decodedEffective) return undefined
+				newEntry.value = [
+					{
+						type: ApplicationTag.DATERANGE,
+						value: decodedEffective.value,
+						len: decodedEffective.len,
+					},
+				]
+				len += decodedEffective.len
+				handledScheduleCalendar = true
+			} else if (
+				value.objectId.type === ObjectType.CALENDAR &&
+				newEntry.id === PropertyIdentifier.DATE_LIST &&
+				newEntry.index === ASN1_ARRAY_ALL
+			) {
+				const decodedDateList = decodeCalendarDatelist(
+					buffer,
+					offset + len,
+					apduLen - len,
+					4,
+					4,
+				)
+				if (!decodedDateList) return undefined
+				newEntry.value = [
+					{
+						type: ApplicationTag.CALENDAR_ENTRY,
+						value: decodedDateList.value,
+						len: decodedDateList.len,
+					},
+				]
+				len += decodedDateList.len
+				handledScheduleCalendar = true
 			}
-			len++
+
+			if (!handledScheduleCalendar) {
+				const localValues: ApplicationData[] = []
+				while (
+					len + offset <= buffer.length &&
+					!decodeIsClosingTagNumber(buffer, offset + len, 4)
+				) {
+					const localResult = bacappDecodeApplicationData(
+						buffer,
+						offset + len,
+						apduLen + offset - 1,
+						value.objectId.type,
+						newEntry.id,
+					)
+					if (!localResult) return undefined
+					len += localResult.len
+					const resObj: ApplicationData = {
+						value: localResult.value,
+						type: localResult.type,
+						len: localResult.len,
+						...(localResult.encoding !== undefined && {
+							encoding: localResult.encoding,
+						}),
+					}
+					localValues.push(resObj)
+				}
+				if (!decodeIsClosingTagNumber(buffer, offset + len, 4))
+					return undefined
+				if (
+					localValues.length === 2 &&
+					localValues[0].type === ApplicationTag.DATE &&
+					localValues[1].type === ApplicationTag.TIME
+				) {
+					const date = localValues[0].value as Date
+					const time = localValues[1].value as Date
+					const bdatetime = new Date(
+						date.getFullYear(),
+						date.getMonth(),
+						date.getDate(),
+						time.getHours(),
+						time.getMinutes(),
+						time.getSeconds(),
+						time.getMilliseconds(),
+					)
+					newEntry.value = [
+						{
+							type: ApplicationTag.DATETIME,
+							value: bdatetime,
+							len: localValues[1].len,
+						},
+					]
+				} else {
+					newEntry.value = localValues
+				}
+				len++
+			}
 		} else if (tagResult3.tagNumber === 5) {
 			const err: ReadAccessError = {
 				errorClass: 0,
@@ -2075,6 +2258,7 @@ export const decodeWeeklySchedule = (
 	buffer: Buffer,
 	offset: number,
 	apduLen: number,
+	closingTagNumber = 3,
 ): Decode<any[]> | undefined => {
 	// PropertyIdentifier.WEEKLY_SCHEDULE on ObjectType.SCHEDULE
 	if (!decodeIsOpeningTagNumber(buffer, offset, 0)) return undefined
@@ -2091,7 +2275,7 @@ export const decodeWeeklySchedule = (
 	}
 	while (
 		len < apduLen &&
-		!decodeIsClosingTagNumber(buffer, offset + len, 3)
+		!decodeIsClosingTagNumber(buffer, offset + len, closingTagNumber)
 	) {
 		if (day > 6) return undefined
 		if (decodeIsOpeningTagNumber(buffer, offset + len, 0)) {
@@ -2141,7 +2325,8 @@ export const decodeWeeklySchedule = (
 		}
 	}
 	if (len >= apduLen) return undefined
-	if (!decodeIsClosingTagNumber(buffer, offset + len, 3)) return undefined
+	if (!decodeIsClosingTagNumber(buffer, offset + len, closingTagNumber))
+		return undefined
 	len += decodeTagNumberAndValue(buffer, offset + len).len
 	return { len, value: Object.values(result) }
 }
@@ -2150,27 +2335,19 @@ export const decodeExceptionSchedule = (
 	buffer: Buffer,
 	offset: number,
 	apduLen: number,
+	closingTagNumber = 3,
 ): Decode<any[]> | undefined => {
 	// PropertyIdentifier.EXCEPTION_SCHEDULE on ObjectType.SCHEDULE
 	let len = 0
-	if (decodeIsClosingTagNumber(buffer, offset, 3)) {
+	if (decodeIsClosingTagNumber(buffer, offset, closingTagNumber)) {
 		len += decodeTagNumberAndValue(buffer, offset).len
 		return { len, value: [] }
 	}
-	if (!decodeIsOpeningTagNumber(buffer, offset, 0)) return undefined
-	len++
 	const result: any[] = []
 	while (
 		len < apduLen &&
-		!decodeIsClosingTagNumber(buffer, offset + len, 3)
+		!decodeIsClosingTagNumber(buffer, offset + len, closingTagNumber)
 	) {
-		if (decodeIsOpeningTagNumber(buffer, offset + len, 0)) {
-			len += decodeTagNumberAndValue(buffer, offset + len).len
-		}
-		if (decodeIsClosingTagNumber(buffer, offset + len, 0)) {
-			len += decodeTagNumberAndValue(buffer, offset + len).len
-			continue
-		}
 		const decoded: {
 			date:
 				| ApplicationData
@@ -2186,113 +2363,133 @@ export const decodeExceptionSchedule = (
 			events: [],
 			priority: null,
 		}
-		let tag = decodeTagNumberAndValue(buffer, offset + len)
-		len += tag.len
-		if (
-			tag.tagNumber === 1 ||
-			decodeIsOpeningTagNumber(buffer, offset + len, 1)
-		) {
-			if (decodeIsOpeningTagNumber(buffer, offset + len, 1)) {
+		let tag: Tag
+		if (decodeIsOpeningTagNumber(buffer, offset + len, 0)) {
+			// BACnetSpecialEvent period choice: calendar-entry [0] BACnetCalendarEntry
+			len += decodeTagNumberAndValue(buffer, offset + len).len
+			const periodTagOffset = offset + len
+			tag = decodeTagNumberAndValue(buffer, periodTagOffset)
+			len += tag.len
+
+			if (decodeIsOpeningTagNumber(buffer, periodTagOffset, 1)) {
+				const dates: ApplicationData[] = []
+				while (!decodeIsClosingTagNumber(buffer, offset + len, 1)) {
+					tag = decodeTagNumberAndValue(buffer, offset + len)
+					len += tag.len
+					const value = bacappDecodeData(
+						buffer,
+						offset + len,
+						apduLen + offset,
+						tag.tagNumber,
+						tag.value,
+					)
+					if (!value) return undefined
+					len += value.len
+					dates.push(value as ApplicationData)
+				}
 				len += decodeTagNumberAndValue(buffer, offset + len).len
-			}
-			const dates: ApplicationData[] = []
-			while (!decodeIsClosingTagNumber(buffer, offset + len, 1)) {
-				tag = decodeTagNumberAndValue(buffer, offset + len)
-				len += tag.len
+				decoded.date = {
+					len: 8,
+					type: ApplicationTag.DATERANGE,
+					value: dates,
+				}
+			} else if (tag.tagNumber === 0 && tag.value === 4) {
 				const value = bacappDecodeData(
 					buffer,
 					offset + len,
 					apduLen + offset,
-					tag.tagNumber,
+					ApplicationTag.DATE,
 					tag.value,
 				)
 				if (!value) return undefined
+				decoded.date = value as ApplicationData
 				len += value.len
-				dates.push(value as ApplicationData)
+			} else if (tag.tagNumber === 2 && tag.value === 3) {
+				const value = bacappDecodeData(
+					buffer,
+					offset + len,
+					apduLen + offset,
+					ApplicationTag.WEEKNDAY,
+					tag.value,
+				)
+				if (!value) return undefined
+				decoded.date = value as ApplicationData
+				len += value.len
+			} else {
+				return undefined
+			}
+
+			if (!decodeIsClosingTagNumber(buffer, offset + len, 0))
+				return undefined
+			len += decodeTagNumberAndValue(buffer, offset + len).len
+		} else {
+			// BACnetSpecialEvent period choice: calendar-reference [1] BACnetObjectIdentifier
+			tag = decodeTagNumberAndValue(buffer, offset + len)
+			if (
+				tag.tagNumber !== 1 ||
+				decodeIsOpeningTagNumber(buffer, offset + len, 1)
+			) {
+				return undefined
+			}
+			len += tag.len
+			const objectId = decodeObjectId(buffer, offset + len)
+			len += objectId.len
+			decoded.date = {
+				len: objectId.len,
+				type: ApplicationTag.OBJECTIDENTIFIER,
+				value: {
+					type: objectId.objectType,
+					instance: objectId.instance,
+				},
+			}
+		}
+
+		if (!decodeIsOpeningTagNumber(buffer, offset + len, 2)) return undefined
+		len += decodeTagNumberAndValue(buffer, offset + len).len
+
+		while (
+			len < apduLen &&
+			!decodeIsClosingTagNumber(buffer, offset + len, 2)
+		) {
+			const event: {
+				time: ApplicationData | null
+				value: ApplicationData | null
+			} = {
+				time: null,
+				value: null,
 			}
 			tag = decodeTagNumberAndValue(buffer, offset + len)
 			len += tag.len
-			decoded.date = {
-				len: 8,
-				type: ApplicationTag.DATERANGE,
-				value: dates,
-			}
-		} else if (tag.tagNumber === 0 && tag.value === 4) {
-			const value = bacappDecodeData(
+			let value = bacappDecodeData(
 				buffer,
 				offset + len,
 				apduLen + offset,
-				ApplicationTag.DATE,
+				tag.tagNumber,
 				tag.value,
 			)
 			if (!value) return undefined
-			decoded.date = value as ApplicationData
 			len += value.len
-		} else if (tag.tagNumber === 2 && tag.value === 3) {
-			const value = bacappDecodeData(
+			event.time = value as ApplicationData
+
+			tag = decodeTagNumberAndValue(buffer, offset + len)
+			len += tag.len
+			value = bacappDecodeData(
 				buffer,
 				offset + len,
 				apduLen + offset,
-				ApplicationTag.WEEKNDAY,
+				tag.tagNumber,
 				tag.value,
 			)
 			if (!value) return undefined
-			decoded.date = value as ApplicationData
+			event.value = value as ApplicationData
 			len += value.len
+			decoded.events.push(event)
 		}
-
-		if (
-			decodeIsClosingTagNumber(buffer, offset + len, 0) &&
-			decodeIsOpeningTagNumber(buffer, offset + len + 1, 2)
-		) {
-			len += decodeTagNumberAndValue(buffer, offset + len).len
-			len += decodeTagNumberAndValue(buffer, offset + len).len
-			while (
-				len < apduLen &&
-				!decodeIsClosingTagNumber(buffer, offset + len, 2)
-			) {
-				const event: {
-					time: ApplicationData | null
-					value: ApplicationData | null
-				} = {
-					time: null,
-					value: null,
-				}
-				tag = decodeTagNumberAndValue(buffer, offset + len)
-				len += tag.len
-				let value = bacappDecodeData(
-					buffer,
-					offset + len,
-					apduLen + offset,
-					tag.tagNumber,
-					tag.value,
-				)
-				if (!value) return undefined
-				len += value.len
-				event.time = value as ApplicationData
-
-				tag = decodeTagNumberAndValue(buffer, offset + len)
-				len += tag.len
-				value = bacappDecodeData(
-					buffer,
-					offset + len,
-					apduLen + offset,
-					tag.tagNumber,
-					tag.value,
-				)
-				if (!value) return undefined
-				event.value = value as ApplicationData
-				len += value.len
-				decoded.events.push(event)
-				if (decodeIsClosingTagNumber(buffer, offset + len, 2)) {
-					len += decodeTagNumberAndValue(buffer, offset + len).len
-					break
-				}
-			}
-		}
+		if (!decodeIsClosingTagNumber(buffer, offset + len, 2)) return undefined
+		len += decodeTagNumberAndValue(buffer, offset + len).len
 
 		tag = decodeTagNumberAndValue(buffer, offset + len)
-		if (decodeIsClosingTagNumber(buffer, offset + len, 3)) {
+		if (decodeIsClosingTagNumber(buffer, offset + len, closingTagNumber)) {
 			len += tag.len
 			return { len, value: result }
 		}
@@ -2310,7 +2507,8 @@ export const decodeExceptionSchedule = (
 		result.push(decoded)
 	}
 	if (len >= apduLen) return undefined
-	if (!decodeIsClosingTagNumber(buffer, offset + len, 3)) return undefined
+	if (!decodeIsClosingTagNumber(buffer, offset + len, closingTagNumber))
+		return undefined
 	len += decodeTagNumberAndValue(buffer, offset + len).len
 	return { len, value: result }
 }
@@ -2319,14 +2517,17 @@ export const decodeScheduleEffectivePeriod = (
 	buffer: Buffer,
 	offset: number,
 	apduLen: number,
+	closingTagNumber = 3,
+	openingTagNumber = 3,
 ): Decode<any[]> | undefined => {
 	// PropertyIdentifier.EFFECTIVE_PERIOD on ObjectType.SCHEDULE
-	if (!decodeIsOpeningTagNumber(buffer, offset - 1, 3)) return undefined
+	if (!decodeIsOpeningTagNumber(buffer, offset - 1, openingTagNumber))
+		return undefined
 	let len = 0
 	const result: ApplicationData[] = []
 	while (
 		len < apduLen &&
-		!decodeIsClosingTagNumber(buffer, offset + len, 3)
+		!decodeIsClosingTagNumber(buffer, offset + len, closingTagNumber)
 	) {
 		const tag = decodeTagNumberAndValue(buffer, offset + len)
 		len += tag.len
@@ -2342,7 +2543,8 @@ export const decodeScheduleEffectivePeriod = (
 		len += value.len
 	}
 	if (len >= apduLen) return undefined
-	if (!decodeIsClosingTagNumber(buffer, offset + len, 3)) return undefined
+	if (!decodeIsClosingTagNumber(buffer, offset + len, closingTagNumber))
+		return undefined
 	len += decodeTagNumberAndValue(buffer, offset + len).len
 	return { len, value: result }
 }
@@ -2351,14 +2553,17 @@ export const decodeCalendarDatelist = (
 	buffer: Buffer,
 	offset: number,
 	apduLen: number,
+	closingTagNumber = 3,
+	openingTagNumber = 3,
 ): Decode<any[]> | undefined => {
 	// PropertyIdentifier.DATE_LIST on ObjectType.CALENDAR
-	if (!decodeIsOpeningTagNumber(buffer, offset - 1, 3)) return undefined
+	if (!decodeIsOpeningTagNumber(buffer, offset - 1, openingTagNumber))
+		return undefined
 	let len = 0
 	const result: any[] = []
 	while (
 		len < apduLen &&
-		!decodeIsClosingTagNumber(buffer, offset + len, 3)
+		!decodeIsClosingTagNumber(buffer, offset + len, closingTagNumber)
 	) {
 		let tag = decodeTagNumberAndValue(buffer, offset + len)
 		len += tag.len
@@ -2416,7 +2621,8 @@ export const decodeCalendarDatelist = (
 		}
 	}
 	if (len >= apduLen) return undefined
-	if (!decodeIsClosingTagNumber(buffer, offset + len, 3)) return undefined
+	if (!decodeIsClosingTagNumber(buffer, offset + len, closingTagNumber))
+		return undefined
 	len += decodeTagNumberAndValue(buffer, offset + len).len
 	return { len, value: result }
 }

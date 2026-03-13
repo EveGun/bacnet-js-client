@@ -11,19 +11,25 @@ import {
 import {
 	EncodeBuffer,
 	BACNetAppData,
+	BACNetCalendarDateListEntry,
 	BACNetCalendarDateListPayload,
 	BACNetDateAppData,
 	BACNetDateRangeAppData,
 	BACNetDateValue,
+	BACNetEffectivePeriodWriteValue,
 	BACNetEffectivePeriodPayload,
+	BACNetExceptionScheduleWriteValue,
 	BACNetExceptionSchedulePayload,
 	BACNetObjectID,
 	BACNetPropertyID,
 	BACNetRawDate,
+	BACNetCalendarDateListWriteValue,
 	BACNetSpecialEventEntry,
 	BACNetTimeAppData,
+	BACNetTimeValueEntry,
 	BACNetWeekNDayAppData,
 	BACNetWeekNDayValue,
+	BACNetWeeklyScheduleWriteValue,
 	BACNetWeeklySchedulePayload,
 	WritePropertyRequest,
 	ApplicationData,
@@ -248,10 +254,105 @@ export default class WriteProperty extends BacnetService {
 		}
 	}
 
+	private static encodeArrayLengthPayload(
+		buffer: EncodeBuffer,
+		propertyName: string,
+		values: unknown,
+		expectedLength?: number,
+	) {
+		let length: number | undefined
+		if (typeof values === 'number') {
+			length = values
+		} else if (
+			WriteProperty.hasTypeAndValue(values) &&
+			values.type === ApplicationTag.UNSIGNED_INTEGER
+		) {
+			length = values.value as number
+		} else if (Array.isArray(values)) {
+			const first = values[0]
+			if (
+				values.length === 1 &&
+				WriteProperty.hasTypeAndValue(first) &&
+				first.type === ApplicationTag.UNSIGNED_INTEGER
+			) {
+				length = first.value as number
+			} else {
+				length = values.length
+			}
+		}
+		if (!Number.isInteger(length) || length! < 0) {
+			throw new Error(
+				`Could not encode: ${propertyName} array size must be an unsigned integer`,
+			)
+		}
+		if (expectedLength !== undefined && length !== expectedLength) {
+			throw new Error(
+				`Could not encode: ${propertyName} array size must be ${expectedLength}`,
+			)
+		}
+		baAsn1.bacappEncodeApplicationData(buffer, {
+			type: ApplicationTag.UNSIGNED_INTEGER,
+			value: length,
+		})
+	}
+
+	private static encodeWeeklyScheduleDay(
+		buffer: EncodeBuffer,
+		day: BACNetTimeValueEntry[],
+		dayLabel: string,
+	) {
+		if (!Array.isArray(day)) {
+			throw new Error(
+				`Could not encode: ${dayLabel} should be an array`,
+			)
+		}
+		baAsn1.encodeOpeningTag(buffer, 0)
+		for (const [slotIndex, slot] of day.entries()) {
+			const timeValue = WriteProperty.normalizeTimeInput(
+				slot?.time,
+				`Could not encode: ${dayLabel} slot ${slotIndex}`,
+			)
+			baAsn1.bacappEncodeApplicationData(buffer, {
+				type: ApplicationTag.TIME,
+				value: timeValue,
+			})
+			baAsn1.bacappEncodeApplicationData(buffer, slot.value)
+		}
+		baAsn1.encodeClosingTag(buffer, 0)
+	}
+
 	private static encodeWeeklySchedulePayload(
 		buffer: EncodeBuffer,
-		values: BACNetWeeklySchedulePayload,
+		values: BACNetWeeklyScheduleWriteValue,
+		arrayIndex: number,
 	) {
+		if (arrayIndex === 0) {
+			WriteProperty.encodeArrayLengthPayload(
+				buffer,
+				'weekly schedule',
+				values,
+				7,
+			)
+			return
+		}
+		if (arrayIndex !== ASN1_ARRAY_ALL) {
+			if (!Number.isInteger(arrayIndex) || arrayIndex < 1 || arrayIndex > 7) {
+				throw new Error(
+					'Could not encode: weekly schedule index must be between 1 and 7',
+				)
+			}
+			if (!Array.isArray(values)) {
+				throw new Error(
+					'Could not encode: weekly schedule should be an array',
+				)
+			}
+			WriteProperty.encodeWeeklyScheduleDay(
+				buffer,
+				values as unknown as BACNetTimeValueEntry[],
+				`weekly schedule day ${arrayIndex - 1}`,
+			)
+			return
+		}
 		if (!Array.isArray(values)) {
 			throw new Error(
 				'Could not encode: weekly schedule should be an array',
@@ -262,25 +363,19 @@ export default class WriteProperty extends BacnetService {
 				'Could not encode: weekly schedule should have exactly 7 days',
 			)
 		}
-		for (const [index, day] of values.entries()) {
-			if (!Array.isArray(day)) {
-				throw new Error(
-					`Could not encode: weekly schedule day ${index} should be an array`,
-				)
-			}
-			baAsn1.encodeOpeningTag(buffer, 0)
-			for (const [slotIndex, slot] of day.entries()) {
-				const timeValue = WriteProperty.normalizeTimeInput(
-					slot?.time,
-					`Could not encode: weekly schedule day ${index} slot ${slotIndex}`,
-				)
-				baAsn1.bacappEncodeApplicationData(buffer, {
-					type: ApplicationTag.TIME,
-					value: timeValue,
-				})
-				baAsn1.bacappEncodeApplicationData(buffer, slot.value)
-			}
-			baAsn1.encodeClosingTag(buffer, 0)
+		if (!values.every((entry) => Array.isArray(entry))) {
+			throw new Error(
+				'Could not encode: weekly schedule day should be an array',
+			)
+		}
+		for (const [index, day] of (
+			values as BACNetWeeklySchedulePayload
+		).entries()) {
+			WriteProperty.encodeWeeklyScheduleDay(
+				buffer,
+				day,
+				`weekly schedule day ${index}`,
+			)
 		}
 	}
 
@@ -308,6 +403,15 @@ export default class WriteProperty extends BacnetService {
 			WriteProperty.encodeWeekNDayContext(buffer, date)
 			return
 		}
+		if (date.type === ApplicationTag.OBJECTIDENTIFIER) {
+			baAsn1.encodeContextObjectId(
+				buffer,
+				1,
+				date.value.type,
+				date.value.instance,
+			)
+			return
+		}
 		throw new Error(
 			'Could not encode: unsupported exception schedule date format',
 		)
@@ -315,22 +419,60 @@ export default class WriteProperty extends BacnetService {
 
 	private static encodeExceptionSchedulePayload(
 		buffer: EncodeBuffer,
-		values: BACNetExceptionSchedulePayload,
+		values: BACNetExceptionScheduleWriteValue,
+		arrayIndex: number,
 	) {
-		if (!Array.isArray(values)) {
-			throw new Error(
-				'Could not encode: exception schedule values must be an array',
+		if (arrayIndex === 0) {
+			WriteProperty.encodeArrayLengthPayload(
+				buffer,
+				'exception schedule',
+				values,
 			)
+			return
 		}
-		for (const [index, entry] of values.entries()) {
-			baAsn1.encodeOpeningTag(buffer, 0)
-			WriteProperty.encodeExceptionDate(buffer, entry.date)
-			baAsn1.encodeClosingTag(buffer, 0)
+		const normalizedValues = (Array.isArray(values)
+			? values
+			: [values]) as unknown as BACNetExceptionSchedulePayload
+		let entries: BACNetExceptionSchedulePayload
+		if (arrayIndex === ASN1_ARRAY_ALL) {
+			if (!Array.isArray(values)) {
+				throw new Error(
+					'Could not encode: exception schedule values must be an array',
+				)
+			}
+			entries = normalizedValues
+		} else {
+			const indexedEntry =
+				normalizedValues.length === 1
+					? normalizedValues[0]
+					: normalizedValues[arrayIndex - 1]
+			if (indexedEntry == null) {
+				throw new Error(
+					'Could not encode: exception schedule entry is missing for the selected index',
+				)
+			}
+			entries = [indexedEntry]
+		}
+		for (const [index, entry] of entries.entries()) {
+			if (entry.date.type === ApplicationTag.OBJECTIDENTIFIER) {
+				// BACnetSpecialEvent period choice: calendar-reference [1] BACnetObjectIdentifier
+				WriteProperty.encodeExceptionDate(buffer, entry.date)
+			} else {
+				// BACnetSpecialEvent period choice: calendar-entry [0] BACnetCalendarEntry
+				baAsn1.encodeOpeningTag(buffer, 0)
+				WriteProperty.encodeExceptionDate(buffer, entry.date)
+				baAsn1.encodeClosingTag(buffer, 0)
+			}
 
 			const events = entry?.events
 			if (events != null && !Array.isArray(events)) {
 				throw new Error(
 					`Could not encode: exception schedule entry ${index} events must be an array`,
+				)
+			}
+			if (!events || events.length === 0) {
+				throw new Error(
+					`Could not encode: exception schedule entry ${index} must have at least one event`,
 				)
 			}
 			baAsn1.encodeOpeningTag(buffer, 2)
@@ -368,8 +510,14 @@ export default class WriteProperty extends BacnetService {
 
 	private static encodeEffectivePeriodPayload(
 		buffer: EncodeBuffer,
-		values: BACNetEffectivePeriodPayload,
+		values: BACNetEffectivePeriodWriteValue,
+		arrayIndex: number,
 	) {
+		if (arrayIndex !== ASN1_ARRAY_ALL) {
+			throw new Error(
+				'Could not encode: effective period does not support indexed access',
+			)
+		}
 		if (!Array.isArray(values)) {
 			throw new Error(
 				'Could not encode: effective period should be an array',
@@ -390,14 +538,26 @@ export default class WriteProperty extends BacnetService {
 
 	private static encodeCalendarDateListPayload(
 		buffer: EncodeBuffer,
-		values: BACNetCalendarDateListPayload,
+		values: BACNetCalendarDateListWriteValue,
+		arrayIndex: number,
 	) {
+		if (arrayIndex !== ASN1_ARRAY_ALL) {
+			throw new Error(
+				'Could not encode: calendar date list does not support indexed access',
+			)
+		}
+		const normalizedValues = (Array.isArray(values) ? values : [
+			values,
+		]) as unknown as BACNetCalendarDateListPayload
+		const dateListValues = normalizedValues
+		let entries: BACNetCalendarDateListPayload
 		if (!Array.isArray(values)) {
 			throw new Error(
 				'Could not encode: calendar date list should be an array',
 			)
 		}
-		for (const entry of values) {
+		entries = dateListValues
+		for (const entry of entries) {
 			if (entry?.type === ApplicationTag.DATE) {
 				WriteProperty.encodeDate(
 					buffer,
@@ -420,6 +580,68 @@ export default class WriteProperty extends BacnetService {
 		}
 	}
 
+	public static encodePropertyValuePayload(
+		buffer: EncodeBuffer,
+		objectType: number,
+		propertyId: number,
+		arrayIndex: number,
+		values: BACNetWritePropertyValues,
+	) {
+		if (
+			objectType === ObjectType.SCHEDULE &&
+			propertyId === PropertyIdentifier.WEEKLY_SCHEDULE
+		) {
+			WriteProperty.encodeWeeklySchedulePayload(
+				buffer,
+				values as BACNetWeeklyScheduleWriteValue,
+				arrayIndex,
+			)
+			return
+		}
+		if (
+			objectType === ObjectType.SCHEDULE &&
+			propertyId === PropertyIdentifier.EXCEPTION_SCHEDULE
+		) {
+			WriteProperty.encodeExceptionSchedulePayload(
+				buffer,
+				values as BACNetExceptionScheduleWriteValue,
+				arrayIndex,
+			)
+			return
+		}
+		if (
+			objectType === ObjectType.SCHEDULE &&
+			propertyId === PropertyIdentifier.EFFECTIVE_PERIOD
+		) {
+			WriteProperty.encodeEffectivePeriodPayload(
+				buffer,
+				values as BACNetEffectivePeriodWriteValue,
+				arrayIndex,
+			)
+			return
+		}
+		if (
+			objectType === ObjectType.CALENDAR &&
+			propertyId === PropertyIdentifier.DATE_LIST
+		) {
+			WriteProperty.encodeCalendarDateListPayload(
+				buffer,
+				values as BACNetCalendarDateListWriteValue,
+				arrayIndex,
+			)
+			return
+		}
+
+		if (!Array.isArray(values)) {
+			throw new Error(
+				'Could not encode: values should be an array of BACnet application data',
+			)
+		}
+		;(values as BACNetAppData[]).forEach((value) =>
+			baAsn1.bacappEncodeApplicationData(buffer, value),
+		)
+	}
+
 	public static encode(
 		buffer: EncodeBuffer,
 		objectType: number,
@@ -429,96 +651,22 @@ export default class WriteProperty extends BacnetService {
 		priority: number,
 		values: BACNetWritePropertyValues,
 	) {
-		if (
-			objectType === ObjectType.SCHEDULE &&
-			propertyId === PropertyIdentifier.WEEKLY_SCHEDULE
-		) {
-			WriteProperty.encodeWriteHeader(
-				buffer,
-				objectType,
-				objectInstance,
-				propertyId,
-				arrayIndex,
-			)
-			WriteProperty.encodeWeeklySchedulePayload(
-				buffer,
-				values as BACNetWeeklySchedulePayload,
-			)
-			baAsn1.encodeClosingTag(buffer, 3)
-			WriteProperty.encodeWritePriority(buffer, priority)
-			return
-		}
-		if (
-			objectType === ObjectType.SCHEDULE &&
-			propertyId === PropertyIdentifier.EXCEPTION_SCHEDULE
-		) {
-			WriteProperty.encodeWriteHeader(
-				buffer,
-				objectType,
-				objectInstance,
-				propertyId,
-				arrayIndex,
-			)
-			WriteProperty.encodeExceptionSchedulePayload(
-				buffer,
-				values as BACNetExceptionSchedulePayload,
-			)
-			baAsn1.encodeClosingTag(buffer, 3)
-			WriteProperty.encodeWritePriority(buffer, priority)
-			return
-		}
-		if (
-			objectType === ObjectType.SCHEDULE &&
-			propertyId === PropertyIdentifier.EFFECTIVE_PERIOD
-		) {
-			WriteProperty.encodeWriteHeader(
-				buffer,
-				objectType,
-				objectInstance,
-				propertyId,
-				arrayIndex,
-			)
-			WriteProperty.encodeEffectivePeriodPayload(
-				buffer,
-				values as BACNetEffectivePeriodPayload,
-			)
-			baAsn1.encodeClosingTag(buffer, 3)
-			WriteProperty.encodeWritePriority(buffer, priority)
-			return
-		}
-		if (
-			objectType === ObjectType.CALENDAR &&
-			propertyId === PropertyIdentifier.DATE_LIST
-		) {
-			WriteProperty.encodeWriteHeader(
-				buffer,
-				objectType,
-				objectInstance,
-				propertyId,
-				arrayIndex,
-			)
-			WriteProperty.encodeCalendarDateListPayload(
-				buffer,
-				values as BACNetCalendarDateListPayload,
-			)
-			baAsn1.encodeClosingTag(buffer, 3)
-			WriteProperty.encodeWritePriority(buffer, priority)
-			return
-		}
-
-		baAsn1.encodeContextObjectId(buffer, 0, objectType, objectInstance)
-		baAsn1.encodeContextEnumerated(buffer, 1, propertyId)
-		if (arrayIndex !== ASN1_ARRAY_ALL) {
-			baAsn1.encodeContextUnsigned(buffer, 2, arrayIndex)
-		}
-		baAsn1.encodeOpeningTag(buffer, 3)
-		;(values as BACNetAppData[]).forEach((value) =>
-			baAsn1.bacappEncodeApplicationData(buffer, value),
+		WriteProperty.encodeWriteHeader(
+			buffer,
+			objectType,
+			objectInstance,
+			propertyId,
+			arrayIndex,
+		)
+		WriteProperty.encodePropertyValuePayload(
+			buffer,
+			objectType,
+			propertyId,
+			arrayIndex,
+			values,
 		)
 		baAsn1.encodeClosingTag(buffer, 3)
-		if (priority !== ASN1_NO_PRIORITY) {
-			baAsn1.encodeContextUnsigned(buffer, 4, priority)
-		}
+		WriteProperty.encodeWritePriority(buffer, priority)
 	}
 
 	public static decode(
