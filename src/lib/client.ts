@@ -1119,6 +1119,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 
 	/**
 	 * The readProperty command reads a single property of an object from a device.
+	 * Use `options.arrayIndex` for indexed array reads (`0` = array size).
 	 */
 
 	async readProperty(
@@ -1195,6 +1196,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 
 	/**
 	 * The writeProperty command writes a single property of an object to a device.
+	 * `options.arrayIndex` supports indexed writes for schedule array properties.
 	 */
 	async writeProperty(
 		receiver: BACNetAddress,
@@ -1214,9 +1216,9 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 				(options as WritePropertyOptions).invokeId ||
 				this._getInvokeId(),
 			arrayIndex:
-				(options as WritePropertyOptions).arrayIndex || ASN1_ARRAY_ALL,
+				(options as WritePropertyOptions).arrayIndex ?? ASN1_ARRAY_ALL,
 			priority:
-				(options as WritePropertyOptions).priority || ASN1_NO_PRIORITY,
+				(options as WritePropertyOptions).priority ?? ASN1_NO_PRIORITY,
 		}
 
 		const buffer = this._getApduBuffer(receiver)
