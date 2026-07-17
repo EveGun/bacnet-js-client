@@ -589,6 +589,19 @@ export interface ClientOptions {
 	 * segmented-response support in the original request.
 	 */
 	abortOnSegmentedResponseWhenNoSegAccepted?: boolean
+	/**
+	 * When true, FORWARDED_NPDU packets are dropped (with a
+	 * `forwardedNpduDroppedNoFdr` event) unless this client holds an active
+	 * foreign-device registration.
+	 *
+	 * Off by default: BBMDs re-broadcast Forwarded-NPDU from BDT peers on
+	 * their local subnet, so ordinary BACnet/IP devices legitimately receive
+	 * FORWARDED_NPDU without ever registering as a foreign device — and the
+	 * receiver cannot distinguish that broadcast from a foreign-device
+	 * unicast. Enable only when this client runs as a pure foreign device on
+	 * a network where unsolicited forwarded traffic should be rejected.
+	 */
+	requireActiveFdrForForwardedNpdu?: boolean
 }
 
 export interface WhoIsOptions {

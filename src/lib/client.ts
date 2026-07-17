@@ -264,6 +264,16 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		}
 	>
 
+	private _activeForeignDeviceRegistrations?: Map<
+		string,
+		{
+			ttl: number
+			expiresAt: number
+			expiringTimer: NodeJS.Timeout
+			expiryTimer: NodeJS.Timeout
+		}
+	>
+
 	private _invokeCounter = 1
 
 	private _requestManager: RequestManager
@@ -292,6 +302,8 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			apduTimeout: options.apduTimeout || 3000,
 			abortOnSegmentedResponseWhenNoSegAccepted:
 				options.abortOnSegmentedResponseWhenNoSegAccepted || false,
+			requireActiveFdrForForwardedNpdu:
+				options.requireActiveFdrForForwardedNpdu || false,
 		}
 
 		this._requestManager = new RequestManager(this._settings.apduTimeout)
@@ -992,6 +1004,80 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		} finally {
 			this._getPendingRequestMaxSegments().delete(invokeId)
 		}
+	}
+
+	private _getActiveForeignDeviceRegistrations() {
+		if (!this._activeForeignDeviceRegistrations) {
+			this._activeForeignDeviceRegistrations = new Map()
+		}
+		return this._activeForeignDeviceRegistrations
+	}
+
+	private _setForeignDeviceRegistrationActive(
+		normalizedAddress: string,
+		ttlSeconds: number,
+	): void {
+		const active = this._getActiveForeignDeviceRegistrations()
+		const previous = active.get(normalizedAddress)
+		if (previous) {
+			clearTimeout(previous.expiringTimer)
+			clearTimeout(previous.expiryTimer)
+		}
+
+		const ttlMs = ttlSeconds * 1000
+		const now = Date.now()
+		const expiresAt = now + ttlMs
+		const expiringDelayMs = Math.max(1, Math.floor(ttlMs * 0.8))
+
+		const expiringTimer = setTimeout(() => {
+			this.emit('fdrExpiring', {
+				payload: {
+					address: normalizedAddress,
+					ttl: ttlSeconds,
+					expiresAt,
+				},
+			})
+		}, expiringDelayMs)
+		if (typeof expiringTimer.unref === 'function') {
+			expiringTimer.unref()
+		}
+
+		const expiryTimer = setTimeout(() => {
+			active.delete(normalizedAddress)
+			this.emit('fdrExpired', {
+				payload: {
+					address: normalizedAddress,
+					ttl: ttlSeconds,
+					expiredAt: Date.now(),
+				},
+			})
+		}, ttlMs)
+		if (typeof expiryTimer.unref === 'function') {
+			expiryTimer.unref()
+		}
+
+		this.emit('fdrRegistered', {
+			payload: {
+				address: normalizedAddress,
+				ttl: ttlSeconds,
+				expiresAt,
+			},
+		})
+
+		active.set(normalizedAddress, {
+			ttl: ttlSeconds,
+			expiresAt,
+			expiringTimer,
+			expiryTimer,
+		})
+	}
+
+	private _isForeignDeviceRegistrationActive(address?: string): boolean {
+		const normalizedAddress = this._normalizeAddress(address)
+		if (!normalizedAddress) return false
+		return this._getActiveForeignDeviceRegistrations().has(
+			normalizedAddress,
+		)
 	}
 
 	private _processError(
@@ -1705,6 +1791,20 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 				break
 
 			case BvlcResultPurpose.FORWARDED_NPDU:
+				// Dropping unsolicited FORWARDED_NPDU is opt-in: BBMDs
+				// re-broadcast Forwarded-NPDU from BDT peers on their local
+				// subnet, so ordinary devices receive them without any FDR.
+				if (
+					this._settings.requireActiveFdrForForwardedNpdu &&
+					!this._isForeignDeviceRegistrationActive(remoteAddress)
+				) {
+					this.emit('forwardedNpduDroppedNoFdr', {
+						payload: { address: remoteAddress },
+					})
+					return trace(
+						'Received FORWARDED_NPDU without active foreign-device registration -> Drop package',
+					)
+				}
 				// Preserve the IP of the node behind the BBMD so we know where to send
 				// replies back to.
 				header.sender.forwardedFrom = result.originatingIP
@@ -1872,6 +1972,9 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 
 	/**
 	 * Registers this client as a foreign device in a BBMD.
+	 *
+	 * The library tracks local FDR lifetime and emits `fdrRegistered`,
+	 * `fdrExpiring`, and `fdrExpired`. Renewal is caller-managed.
 	 */
 	async registerForeignDevice(
 		receiver: BACNetAddress,
@@ -1962,6 +2065,10 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 				// ASHRAE 135 Annex J encodes successful completion as 0x0000 for all
 				// BVLC operations. For now we can only correlate by sender address.
 				if (resultCode === BvlcResultFormat.SUCCESSFUL_COMPLETION) {
+					this._setForeignDeviceRegistrationActive(
+						expectedAddress,
+						ttl,
+					)
 					cleanup()
 					resolve()
 					return
@@ -3209,6 +3316,13 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 				}
 			}
 			this._segmentAssemblyStates.clear()
+		}
+		if (this._activeForeignDeviceRegistrations?.size) {
+			for (const registration of this._activeForeignDeviceRegistrations.values()) {
+				clearTimeout(registration.expiringTimer)
+				clearTimeout(registration.expiryTimer)
+			}
+			this._activeForeignDeviceRegistrations.clear()
 		}
 		this._transport.close()
 	}
