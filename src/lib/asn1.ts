@@ -1,4 +1,5 @@
 import * as iconv from 'iconv-lite'
+import debugLib from 'debug'
 
 import {
 	EncodeBuffer,
@@ -50,6 +51,8 @@ import {
 	ASN1_MAX_APPLICATION_TAG,
 	TimeStamp,
 } from './enum'
+
+const trace = debugLib('bacnet:asn1:trace')
 
 export const START_YEAR = 1900
 export const MAX_YEARS = 256
@@ -145,8 +148,8 @@ const decodeUcs4CharacterString = (
 		value += String.fromCodePoint(normalizedCodePoint)
 	}
 	const trailingBytes = (length - startOffset) % 4
-	if (trailingBytes !== 0 && typeof console.debug === 'function') {
-		console.debug(
+	if (trailingBytes !== 0) {
+		trace(
 			`decodeUcs4CharacterString: ignoring ${trailingBytes} trailing byte(s)`,
 		)
 	}
