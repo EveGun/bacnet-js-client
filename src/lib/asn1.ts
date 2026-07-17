@@ -2499,11 +2499,13 @@ export const decodeRange = (
 		// [8] failure (BACnetError)
 		// [9] time-change (REAL - seconds delta for clock adjustment)
 		// [10] any-value (ABSTRACT-SYNTAX.&Type)
+		const datumTagOffset = offset + len
 		tag = decodeTagNumberAndValue(buffer, offset + len)
 		len += tag.len
 		let value: ApplicationData | undefined
 		let isLogStatus = false
 		let isTimeChange = false
+		let isFailure = false
 		if (tag.tagNumber === 0) {
 			// log-status choice: BACnetLogStatus bitstring per ASHRAE 135 §12.25
 			// Special log records (log-disabled, buffer-purged, log-interrupted)
@@ -2515,6 +2517,14 @@ export const decodeRange = (
 				tag.value,
 			)
 			isLogStatus = true
+		} else if (tag.tagNumber === 1) {
+			// boolean-value: context-tagged BOOLEAN carries one content octet
+			// per ASHRAE 135 §20.2.3
+			value = {
+				type: ApplicationTag.BOOLEAN,
+				value: buffer[offset + len] > 0,
+				len: tag.value,
+			}
 		} else if (tag.tagNumber === 2) {
 			// real-value
 			value = bacappDecodeData(
@@ -2542,6 +2552,69 @@ export const decodeRange = (
 				ApplicationTag.UNSIGNED_INTEGER,
 				tag.value,
 			)
+		} else if (tag.tagNumber === 5) {
+			// signed-value
+			value = bacappDecodeData(
+				buffer,
+				offset + len,
+				maxOffset,
+				ApplicationTag.SIGNED_INTEGER,
+				tag.value,
+			)
+		} else if (tag.tagNumber === 6) {
+			// bitstring-value
+			value = bacappDecodeData(
+				buffer,
+				offset + len,
+				maxOffset,
+				ApplicationTag.BIT_STRING,
+				tag.value,
+			)
+		} else if (tag.tagNumber === 7) {
+			// null-value: no content octets
+			value = { type: ApplicationTag.NULL, value: null, len: 0 }
+		} else if (tag.tagNumber === 8) {
+			// failure: constructed Error ::= SEQUENCE { error-class, error-code }
+			// (opening tag 8, two application-tagged enumerations, closing tag 8)
+			if (!decodeIsOpeningTagNumber(buffer, datumTagOffset, 8)) {
+				return undefined
+			}
+			let innerLen = 0
+			const classTag = decodeTagNumberAndValue(buffer, offset + len)
+			innerLen += classTag.len
+			const errorClass = decodeEnumerated(
+				buffer,
+				offset + len + innerLen,
+				classTag.value,
+			)
+			innerLen += errorClass.len
+			const codeTag = decodeTagNumberAndValue(
+				buffer,
+				offset + len + innerLen,
+			)
+			innerLen += codeTag.len
+			const errorCode = decodeEnumerated(
+				buffer,
+				offset + len + innerLen,
+				codeTag.value,
+			)
+			innerLen += errorCode.len
+			if (!decodeIsClosingTagNumber(buffer, offset + len + innerLen, 8)) {
+				return undefined
+			}
+			innerLen += decodeTagNumberAndValue(
+				buffer,
+				offset + len + innerLen,
+			).len
+			value = {
+				type: ApplicationTag.ERROR,
+				value: {
+					errorClass: errorClass.value,
+					errorCode: errorCode.value,
+				},
+				len: innerLen,
+			}
+			isFailure = true
 		} else if (tag.tagNumber === 9) {
 			// time-change: REAL value representing seconds the clock changed
 			// Per ASHRAE 135 §12.25, time-change records do not have status flags
@@ -2553,6 +2626,31 @@ export const decodeRange = (
 				tag.value,
 			)
 			isTimeChange = true
+		} else if (tag.tagNumber === 10) {
+			// any-value: constructed ABSTRACT-SYNTAX.&Type — one
+			// application-tagged datum wrapped in opening/closing tag 10
+			if (!decodeIsOpeningTagNumber(buffer, datumTagOffset, 10)) {
+				return undefined
+			}
+			const anyValue = bacappDecodeApplicationData(
+				buffer,
+				offset + len,
+				maxOffset,
+				ASN1_MAX_OBJECT_TYPE,
+				ASN1_MAX_PROPERTY_ID,
+			)
+			if (!anyValue) return undefined
+			let innerLen = anyValue.len
+			if (
+				!decodeIsClosingTagNumber(buffer, offset + len + innerLen, 10)
+			) {
+				return undefined
+			}
+			innerLen += decodeTagNumberAndValue(
+				buffer,
+				offset + len + innerLen,
+			).len
+			value = { ...anyValue, len: innerLen }
 		}
 		if (!value) return undefined
 		len += value.len
@@ -2600,6 +2698,11 @@ export const decodeRange = (
 		const record: LogRecord = {
 			timestamp,
 			value: value.value as LogRecordValue,
+			valueType: value.type,
+		}
+
+		if (isFailure) {
+			record.isFailure = true
 		}
 
 		if (isLogStatus) {
