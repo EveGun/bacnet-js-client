@@ -16,4 +16,55 @@ test.describe('bacnet - Services layer TimeSync unit', () => {
 			value: date,
 		})
 	})
+
+	test('should encode UTC date/time using UTC components', () => {
+		const buffer = utils.getBuffer()
+		const date = new Date('2026-02-24T23:30:00.000Z')
+		TimeSync.encodeUtc(buffer, date)
+		assert.deepStrictEqual(
+			Array.from(buffer.buffer.subarray(0, buffer.offset)),
+			[0xa4, 0x7e, 0x02, 0x18, 0x02, 0xb4, 0x17, 0x1e, 0x00, 0x00],
+		)
+	})
+
+	test('should decode UTC date/time to UTC instant', () => {
+		const buffer = utils.getBuffer()
+		const date = new Date('2026-02-24T23:30:00.120Z')
+		TimeSync.encodeUtc(buffer, date)
+		const result = TimeSync.decodeUtc(buffer.buffer, 0)
+		assert.ok(result)
+		assert.equal(result.value.toISOString(), '2026-02-24T23:30:00.120Z')
+	})
+
+	test('should accept epoch-millis input in UTC encode path', () => {
+		const buffer = utils.getBuffer()
+		const epochMillis = Date.UTC(2026, 1, 24, 23, 30, 0, 0)
+		assert.doesNotThrow(() => {
+			TimeSync.encodeUtc(buffer, epochMillis)
+		})
+	})
+
+	test('should reject invalid UTC date input', () => {
+		const buffer = utils.getBuffer()
+		const invalidDate = new Date('invalid')
+		assert.throws(() => {
+			TimeSync.encodeUtc(buffer, invalidDate)
+		}, /invalid date/)
+	})
+
+	test('should reject non-finite UTC timestamp input', () => {
+		const buffer = utils.getBuffer()
+		assert.throws(() => {
+			TimeSync.encodeUtc(buffer, Number.POSITIVE_INFINITY)
+		}, /invalid timestamp/)
+	})
+
+	test('should round UTC hundredths instead of truncating', () => {
+		const buffer = utils.getBuffer()
+		const date = new Date('2026-02-24T23:30:00.125Z')
+		TimeSync.encodeUtc(buffer, date)
+		const bytes = Array.from(buffer.buffer.subarray(0, buffer.offset))
+		// DATE tag(0xa4) + 4 date bytes + TIME tag(0xb4) + hh mm ss hundredths
+		assert.equal(bytes[9], 13)
+	})
 })
