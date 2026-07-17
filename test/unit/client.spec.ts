@@ -7,8 +7,10 @@ import * as baApdu from '../../src/lib/apdu'
 import * as baBvlc from '../../src/lib/bvlc'
 import {
 	GetEventInformation,
+	ReadProperty,
 	RegisterForeignDevice,
 	WhoIs,
+	WriteProperty,
 } from '../../src/lib/services'
 import {
 	BvlcResultFormat,
@@ -1048,5 +1050,93 @@ test.describe('bacnet - client', () => {
 			() => client.whoIsThroughBBMD({}),
 			/whoIsThroughBBMD requires bbmd\.address/,
 		)
+	})
+
+	const createWireCaptureClient = () => {
+		const client = Object.create(BACnetClient.prototype) as BACnetClient & {
+			_settings: { apduTimeout: number }
+			_getApduBuffer: () => { buffer: Buffer; offset: number }
+			_requestManager: { add: (invokeId: number) => Promise<never> }
+			_send: (
+				buffer: { buffer: Buffer; offset: number },
+				receiver?: { address?: string },
+			) => void
+		}
+		const captured: { sentData?: Buffer } = {}
+		client._settings = { apduTimeout: 100 }
+		client._getApduBuffer = () => ({
+			buffer: Buffer.alloc(1482),
+			offset: 4,
+		})
+		client._requestManager = {
+			add: () => Promise.reject(new Error('STUB_NO_RESPONSE')),
+		}
+		client._send = (buffer) => {
+			captured.sentData = Buffer.from(
+				buffer.buffer.subarray(0, buffer.offset),
+			)
+		}
+		return { client, captured }
+	}
+
+	const decodeServicePayloadOffset = (sentData: Buffer) => {
+		const bvlc = baBvlc.decode(sentData, 0)
+		assert.ok(bvlc)
+		const npdu = baNpdu.decode(sentData, bvlc.len)
+		assert.ok(npdu)
+		const apdu = baApdu.decodeConfirmedServiceRequest(
+			sentData,
+			bvlc.len + npdu.len,
+		)
+		return bvlc.len + npdu.len + apdu.len
+	}
+
+	test('writeProperty should encode arrayIndex 0 unchanged on the wire', async () => {
+		const { client, captured } = createWireCaptureClient()
+
+		await assert.rejects(
+			client.writeProperty(
+				{ address: '127.0.0.1' },
+				{ type: 17, instance: 1 },
+				123, // PropertyIdentifier.WEEKLY_SCHEDULE
+				7 as any,
+				{ arrayIndex: 0, invokeId: 1 },
+			),
+			/STUB_NO_RESPONSE/,
+		)
+
+		assert.ok(captured.sentData)
+		const payloadOffset = decodeServicePayloadOffset(captured.sentData)
+		const request = WriteProperty.decode(
+			captured.sentData,
+			payloadOffset,
+			captured.sentData.length - payloadOffset,
+		)
+		assert.ok(request)
+		assert.strictEqual(request.value.property.index, 0)
+	})
+
+	test('readProperty should encode arrayIndex 0 unchanged on the wire', async () => {
+		const { client, captured } = createWireCaptureClient()
+
+		await assert.rejects(
+			client.readProperty(
+				{ address: '127.0.0.1' },
+				{ type: 17, instance: 1 },
+				123, // PropertyIdentifier.WEEKLY_SCHEDULE
+				{ arrayIndex: 0, invokeId: 1 },
+			),
+			/STUB_NO_RESPONSE/,
+		)
+
+		assert.ok(captured.sentData)
+		const payloadOffset = decodeServicePayloadOffset(captured.sentData)
+		const request = ReadProperty.decode(
+			captured.sentData,
+			payloadOffset,
+			captured.sentData.length - payloadOffset,
+		)
+		assert.ok(request)
+		assert.strictEqual(request.property.index, 0)
 	})
 })
