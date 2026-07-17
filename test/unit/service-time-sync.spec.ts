@@ -21,18 +21,10 @@ test.describe('bacnet - Services layer TimeSync unit', () => {
 		const buffer = utils.getBuffer()
 		const date = new Date('2026-02-24T23:30:00.000Z')
 		TimeSync.encodeUtc(buffer, date)
-		assert.deepStrictEqual(Array.from(buffer.buffer.subarray(0, buffer.offset)), [
-			0xa4,
-			0x7e,
-			0x02,
-			0x18,
-			0x02,
-			0xb4,
-			0x17,
-			0x1e,
-			0x00,
-			0x00,
-		])
+		assert.deepStrictEqual(
+			Array.from(buffer.buffer.subarray(0, buffer.offset)),
+			[0xa4, 0x7e, 0x02, 0x18, 0x02, 0xb4, 0x17, 0x1e, 0x00, 0x00],
+		)
 	})
 
 	test('should decode UTC date/time to UTC instant', () => {

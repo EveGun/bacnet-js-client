@@ -55,7 +55,10 @@ export default class TimeSync extends BacnetService {
 		const time = baAsn1.decodeBacnetTime(buffer, offset + len)
 		len += time.len
 
-		if (date.value === baAsn1.ZERO_DATE || time.value === baAsn1.ZERO_DATE) {
+		if (
+			date.value === baAsn1.ZERO_DATE ||
+			time.value === baAsn1.ZERO_DATE
+		) {
 			return {
 				len,
 				value: baAsn1.ZERO_DATE,

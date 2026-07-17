@@ -23,17 +23,9 @@ test.describe('bacnet - timeSyncUTC integration', () => {
 		assert.strictEqual(transport.sentPackets.length, 1)
 		const packet = transport.sentPackets[0]
 		const utcPayload = Array.from(packet.subarray(packet.length - 10))
-		assert.deepStrictEqual(utcPayload, [
-			0xa4,
-			0x7e,
-			0x02,
-			0x18,
-			0x02,
-			0xb4,
-			0x17,
-			0x1e,
-			0x00,
-			0x00,
-		])
+		assert.deepStrictEqual(
+			utcPayload,
+			[0xa4, 0x7e, 0x02, 0x18, 0x02, 0xb4, 0x17, 0x1e, 0x00, 0x00],
+		)
 	})
 })
