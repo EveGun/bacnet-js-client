@@ -184,6 +184,17 @@ export interface BACNetDevObjRef {
 	deviceIndentifier: BACNetObjectID
 }
 
+export interface BACNetDeviceObjectReference {
+	deviceIdentifier?: BACNetObjectID
+	objectIdentifier: BACNetObjectID
+}
+
+export interface BACNetAuthenticationFactor {
+	formatType: number
+	formatClass: number
+	value: Buffer
+}
+
 /**
  * TODO: when the time comes, drop the default value for the `Tag` generic
  *       parameter to enforce type safety everywhere throughout the library.
@@ -731,6 +742,10 @@ export interface EventNotificationPayload extends BasicServicePayload {
 	ackRequired: boolean
 	fromState: number
 	toState: number
+	/**
+	 * Decoded notification parameters in BACnet application-data form.
+	 * Use `EventNotifyDataParams` for event-type-specific decoded fields.
+	 */
 	eventValues: BACNetAppData[]
 }
 
@@ -855,6 +870,10 @@ export interface EnrollmentSummaryAcknowledge {
 }
 
 export interface EventNotifyDataParams {
+	/**
+	 * Core fields from `BACnetEventNotificationData`. The optional `event*` groups
+	 * below are populated according to `eventType`.
+	 */
 	processId: number
 	initiatingObjectId: {
 		type: number
@@ -918,9 +937,77 @@ export interface EventNotifyDataParams {
 	unsignedRangeExceedingValue?: number
 	unsignedRangeStatusFlags?: BACNetBitString
 	unsignedRangeExceededLimit?: number
+
+	/**
+	 * Raw `BACnetNotificationParameters` payload including the original choice tag.
+	 * This can be used by callers that need vendor-specific post-processing.
+	 */
+	eventValuesRaw?: Buffer
+
+	// COMMAND_FAILURE
+	commandFailureCommandValue?: Buffer
+	commandFailureCommandValueDecoded?: BACNetAppData
+	commandFailureStatusFlags?: BACNetBitString
+	commandFailureFeedbackValue?: Buffer
+	commandFailureFeedbackValueDecoded?: BACNetAppData
+
+	// DOUBLE_OUT_OF_RANGE
+	doubleOutOfRangeExceedingValue?: number
+	doubleOutOfRangeStatusFlags?: BACNetBitString
+	doubleOutOfRangeDeadband?: number
+	doubleOutOfRangeExceededLimit?: number
+
+	// SIGNED_OUT_OF_RANGE
+	signedOutOfRangeExceedingValue?: number
+	signedOutOfRangeStatusFlags?: BACNetBitString
+	signedOutOfRangeDeadband?: number
+	signedOutOfRangeExceededLimit?: number
+
+	// UNSIGNED_OUT_OF_RANGE
+	unsignedOutOfRangeExceedingValue?: number
+	unsignedOutOfRangeStatusFlags?: BACNetBitString
+	unsignedOutOfRangeDeadband?: number
+	unsignedOutOfRangeExceededLimit?: number
+
+	// CHANGE_OF_CHARACTERSTRING
+	changeOfCharacterStringChangedValue?: string
+	changeOfCharacterStringStatusFlags?: BACNetBitString
+	changeOfCharacterStringAlarmValue?: string
+
+	// CHANGE_OF_STATUS_FLAGS
+	changeOfStatusFlagsPresentValue?: Buffer
+	changeOfStatusFlagsPresentValueDecoded?: BACNetAppData
+	changeOfStatusFlagsReferencedFlags?: BACNetBitString
+
+	// CHANGE_OF_RELIABILITY
+	changeOfReliabilityReliability?: number
+	changeOfReliabilityStatusFlags?: BACNetBitString
+	changeOfReliabilityPropertyValues?: Buffer
+	changeOfReliabilityPropertyValuesDecoded?: BACNetAppData
+
+	// CHANGE_OF_DISCRETE_VALUE
+	changeOfDiscreteValueNewValue?: BACNetAppData
+	changeOfDiscreteValueStatusFlags?: BACNetBitString
+
+	// CHANGE_OF_TIMER
+	changeOfTimerNewState?: number
+	changeOfTimerStatusFlags?: BACNetBitString
+	changeOfTimerUpdateTime?: Date
+	changeOfTimerLastStateChange?: number
+	changeOfTimerInitialTimeout?: number
+	changeOfTimerExpirationTime?: Date
+
+	// ACCESS_EVENT
+	accessEventAccessEvent?: number
+	accessEventStatusFlags?: BACNetBitString
+	accessEventTag?: number
+	accessEventTime?: BACNetTimestamp
+	accessEventAccessCredential?: BACNetDeviceObjectReference
+	accessEventAuthenticationFactor?: BACNetAuthenticationFactor
 }
 
 export interface EventNotifyDataResult extends EventNotifyDataParams {
+	/** Bytes consumed while decoding the EventNotification payload. */
 	len: number
 }
 
