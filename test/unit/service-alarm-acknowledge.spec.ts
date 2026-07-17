@@ -112,7 +112,10 @@ test.describe('bacnet - Services layer AlarmAcknowledge unit', () => {
 		)
 
 		const prefix = Buffer.from([0xaa, 0xbb, 0xcc])
-		const combined = Buffer.concat([prefix, ack.buffer.slice(0, ack.offset)])
+		const combined = Buffer.concat([
+			prefix,
+			ack.buffer.slice(0, ack.offset),
+		])
 		const result = AlarmAcknowledge.decode(
 			combined,
 			prefix.length,

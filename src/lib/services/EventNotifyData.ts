@@ -417,7 +417,11 @@ export default class EventNotifyData extends BacnetService {
 			tagNumber,
 		)
 		if (openingTagLen == null) return undefined
-		const totalLen = EventNotifyData.skipOpeningTag(buffer, offset, tagNumber)
+		const totalLen = EventNotifyData.skipOpeningTag(
+			buffer,
+			offset,
+			tagNumber,
+		)
 		if (totalLen == null || totalLen <= openingTagLen) return undefined
 		const closingTagLen = EventNotifyData.decodeClosingTag(
 			buffer,
@@ -1152,7 +1156,7 @@ export default class EventNotifyData extends BacnetService {
 		offset: number,
 		eventData: EventNotifyDataResult,
 	): number | undefined {
-			switch (eventData.eventType) {
+		switch (eventData.eventType) {
 			case EventType.CHANGE_OF_BITSTRING:
 			case EventType.CHANGE_OF_STATE:
 			case EventType.CHANGE_OF_VALUE:
@@ -1170,18 +1174,18 @@ export default class EventNotifyData extends BacnetService {
 			case EventType.CHANGE_OF_STATUS_FLAGS:
 			case EventType.CHANGE_OF_RELIABILITY:
 			case EventType.CHANGE_OF_DISCRETE_VALUE:
-				case EventType.CHANGE_OF_TIMER:
-					break
-				default:
-					const rawPayload = EventNotifyData.decodeContextRawPayload(
-						buffer,
-						offset,
-						12,
-					)
-					if (!rawPayload) return undefined
-					eventData.eventValuesRaw = Buffer.from(rawPayload.value)
-					return rawPayload.len
-			}
+			case EventType.CHANGE_OF_TIMER:
+				break
+			default:
+				const rawPayload = EventNotifyData.decodeContextRawPayload(
+					buffer,
+					offset,
+					12,
+				)
+				if (!rawPayload) return undefined
+				eventData.eventValuesRaw = Buffer.from(rawPayload.value)
+				return rawPayload.len
+		}
 
 		let len = 0
 		const openingTag12 = EventNotifyData.decodeOpeningTag(

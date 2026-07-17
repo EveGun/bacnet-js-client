@@ -1001,7 +1001,9 @@ test.describe('bacnet - Services layer EventNotifyData unit', () => {
 		assert.strictEqual(result.toState, 1)
 		assert.deepStrictEqual(
 			result.eventValuesRaw,
-			Buffer.from(rawEventValues.buffer.subarray(0, rawEventValues.offset)),
+			Buffer.from(
+				rawEventValues.buffer.subarray(0, rawEventValues.offset),
+			),
 		)
 		assert.strictEqual(result.len, buffer.offset)
 	})
@@ -1046,7 +1048,9 @@ test.describe('bacnet - Services layer EventNotifyData unit', () => {
 		assert.strictEqual(result.toState, 1)
 		assert.deepStrictEqual(
 			result.eventValuesRaw,
-			Buffer.from(rawEventValues.buffer.subarray(0, rawEventValues.offset)),
+			Buffer.from(
+				rawEventValues.buffer.subarray(0, rawEventValues.offset),
+			),
 		)
 	})
 })
