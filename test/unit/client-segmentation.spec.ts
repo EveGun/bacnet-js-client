@@ -237,6 +237,26 @@ test.describe('bacnet - outgoing request segmentation', () => {
 		assert.strictEqual(sent.length, 0)
 	})
 
+	test('encoder RangeError from buffer bounds surfaces as ApduTooLargeError', async () => {
+		const { client, sent } = createStubClient()
+		await assert.rejects(
+			client._sendConfirmedRequest({
+				receiver: { address: DEVICE },
+				service: SERVICE,
+				maxSegments: MaxSegmentsAccepted.SEGMENTS_65,
+				maxApdu: MaxApduLengthAccepted.OCTETS_1476,
+				invokeId: 1,
+				encodePayload: (buffer: EncodeBuffer) => {
+					// Encoders using Buffer.write* throw RangeError when the
+					// payload exceeds the transport buffer.
+					buffer.buffer.writeUInt8(0, buffer.buffer.length)
+				},
+			}),
+			ApduTooLargeError,
+		)
+		assert.strictEqual(sent.length, 0)
+	})
+
 	test('segmented mode with a payload fitting one segment sends an unsegmented request', async () => {
 		const { client, sent } = createStubClient()
 		const promise = sendRequest(client, {

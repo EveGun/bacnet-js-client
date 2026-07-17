@@ -471,30 +471,69 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			0,
 			0,
 		)
-		args.encodePayload(buffer)
-		const apduLength = buffer.offset - apduStart
 
 		const remoteLimit = args.segmentedRequest?.remoteMaxApduLength
-		if (remoteLimit !== undefined && apduLength > remoteLimit) {
-			throw new ApduTooLargeError({
-				encodedLength: apduLength,
-				maximumLength: remoteLimit,
-				service: args.service,
-				invokeId: args.invokeId,
-				segmentationAvailable: true,
-			})
-		}
-		// Without a caller-supplied remote limit we preserve the previous
-		// behavior, except that a request physically overflowing the
-		// transport buffer is rejected instead of being sent truncated.
-		if (buffer.offset > buffer.buffer.length) {
-			throw new ApduTooLargeError({
-				encodedLength: apduLength,
-				maximumLength: buffer.buffer.length - apduStart,
-				service: args.service,
-				invokeId: args.invokeId,
-				segmentationAvailable: true,
-			})
+		if (args.segmentedRequest) {
+			// When segmentation options are supplied (even with segmented
+			// mode disabled) the payload is encoded into a scratch buffer
+			// first, so the exact APDU length is known even when it
+			// exceeds the transport buffer and validation happens before
+			// anything touches the wire.
+			const payload: EncodeBuffer = {
+				buffer: Buffer.alloc(OUTGOING_SEGMENT_PAYLOAD_BUFFER_LENGTH),
+				offset: 0,
+			}
+			args.encodePayload(payload)
+			const apduLength = CONFIRMED_REQUEST_HEADER_LENGTH + payload.offset
+			if (remoteLimit !== undefined && apduLength > remoteLimit) {
+				throw new ApduTooLargeError({
+					encodedLength: apduLength,
+					maximumLength: remoteLimit,
+					service: args.service,
+					invokeId: args.invokeId,
+					segmentationAvailable: true,
+				})
+			}
+			if (buffer.offset + payload.offset > buffer.buffer.length) {
+				throw new ApduTooLargeError({
+					encodedLength: apduLength,
+					maximumLength: buffer.buffer.length - apduStart,
+					service: args.service,
+					invokeId: args.invokeId,
+					segmentationAvailable: true,
+				})
+			}
+			payload.buffer.copy(buffer.buffer, buffer.offset, 0, payload.offset)
+			buffer.offset += payload.offset
+		} else {
+			// Without segmentation options we preserve the previous
+			// behavior, except that a request physically overflowing the
+			// transport buffer is rejected instead of being sent truncated
+			// (some encoders write silently past the end, others throw a
+			// RangeError from Buffer bounds checks).
+			try {
+				args.encodePayload(buffer)
+			} catch (error) {
+				if (error instanceof RangeError) {
+					throw new ApduTooLargeError({
+						encodedLength: buffer.offset - apduStart,
+						maximumLength: buffer.buffer.length - apduStart,
+						service: args.service,
+						invokeId: args.invokeId,
+						segmentationAvailable: true,
+					})
+				}
+				throw error
+			}
+			if (buffer.offset > buffer.buffer.length) {
+				throw new ApduTooLargeError({
+					encodedLength: buffer.offset - apduStart,
+					maximumLength: buffer.buffer.length - apduStart,
+					service: args.service,
+					invokeId: args.invokeId,
+					segmentationAvailable: true,
+				})
+			}
 		}
 		this.sendBvlc(args.receiver, buffer)
 		return this._awaitResponse(args.invokeId, args.maxSegments)
