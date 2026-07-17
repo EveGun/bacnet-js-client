@@ -147,6 +147,28 @@ test.describe('ReadRangeAcknowledge', () => {
 		})
 	})
 
+	test('should report len including rangeBuffer and closing tag', () => {
+		const buffer = utils.getBuffer()
+		ReadRange.encodeAcknowledge(
+			buffer,
+			{ type: 12, instance: 500 },
+			5048,
+			0xffffffff,
+			{ bitsUsed: 24, value: [1, 2, 3] },
+			12,
+			Buffer.from([1, 2, 3]),
+			ReadRangeType.BY_POSITION,
+			2,
+		)
+		const result = ReadRange.decodeAcknowledge(
+			buffer.buffer,
+			0,
+			buffer.offset,
+		)
+		assert.ok(result)
+		assert.strictEqual(result.len, buffer.offset)
+	})
+
 	test('should decode trend range values from range buffer', () => {
 		const applicationData = utils.getBuffer()
 		baAsn1.encodeOpeningTag(applicationData, 0)
@@ -466,5 +488,206 @@ test.describe('ReadRangeAcknowledge', () => {
 			truncated.length,
 		)
 		assert.equal(result, undefined)
+	})
+})
+
+test.describe('ReadRangeAcknowledge log-datum choices', () => {
+	const buildAck = (encodeDatum: (buf: any) => void): Buffer => {
+		const applicationData = utils.getBuffer()
+		baAsn1.encodeOpeningTag(applicationData, 0)
+		baAsn1.bacappEncodeApplicationData(applicationData, {
+			type: ApplicationTag.DATE,
+			value: new Date(2024, 1, 3),
+		})
+		baAsn1.bacappEncodeApplicationData(applicationData, {
+			type: ApplicationTag.TIME,
+			value: new Date(2024, 1, 3, 12, 15, 30, 0),
+		})
+		baAsn1.encodeClosingTag(applicationData, 0)
+		baAsn1.encodeOpeningTag(applicationData, 1)
+		encodeDatum(applicationData)
+		baAsn1.encodeClosingTag(applicationData, 1)
+
+		const buffer = utils.getBuffer()
+		ReadRange.encodeAcknowledge(
+			buffer,
+			{ type: 20, instance: 0 },
+			131,
+			0xffffffff,
+			{ bitsUsed: 3, value: [0] },
+			1,
+			applicationData.buffer.slice(0, applicationData.offset),
+			ReadRangeType.BY_POSITION,
+			0,
+		)
+		return buffer.buffer.slice(0, buffer.offset)
+	}
+
+	const decodeSingle = (ack: Buffer) => {
+		const result = ReadRange.decodeAcknowledge(ack, 0, ack.length)
+		assert.ok(result)
+		assert.ok(result.values)
+		assert.equal(result.values?.length, 1)
+		return result.values![0]
+	}
+
+	test('should decode boolean-value [1]', () => {
+		const record = decodeSingle(
+			buildAck((buf) => {
+				baAsn1.encodeTag(buf, 1, true, 1)
+				buf.buffer.writeUInt8(1, buf.offset)
+				buf.offset += 1
+			}),
+		)
+		assert.strictEqual(record.value, true)
+		assert.equal(record.valueType, ApplicationTag.BOOLEAN)
+	})
+
+	test('should decode signed-value [5]', () => {
+		const record = decodeSingle(
+			buildAck((buf) => {
+				baAsn1.encodeTag(buf, 5, true, 1)
+				buf.buffer.writeInt8(-2, buf.offset)
+				buf.offset += 1
+			}),
+		)
+		assert.strictEqual(record.value, -2)
+		assert.equal(record.valueType, ApplicationTag.SIGNED_INTEGER)
+	})
+
+	test('should decode bitstring-value [6]', () => {
+		const record = decodeSingle(
+			buildAck((buf) => {
+				baAsn1.encodeContextBitstring(buf, 6, {
+					bitsUsed: 4,
+					value: [0b0101],
+				})
+			}),
+		)
+		assert.equal(record.valueType, ApplicationTag.BIT_STRING)
+		assert.equal((record.value as any).bitsUsed, 4)
+	})
+
+	test('should decode null-value [7]', () => {
+		const record = decodeSingle(
+			buildAck((buf) => {
+				baAsn1.encodeTag(buf, 7, true, 0)
+			}),
+		)
+		assert.strictEqual(record.value, null)
+		assert.equal(record.valueType, ApplicationTag.NULL)
+	})
+
+	test('should decode failure [8] with error class and code', () => {
+		const record = decodeSingle(
+			buildAck((buf) => {
+				baAsn1.encodeOpeningTag(buf, 8)
+				baAsn1.bacappEncodeApplicationData(buf, {
+					type: ApplicationTag.ENUMERATED,
+					value: 2,
+				})
+				baAsn1.bacappEncodeApplicationData(buf, {
+					type: ApplicationTag.ENUMERATED,
+					value: 32,
+				})
+				baAsn1.encodeClosingTag(buf, 8)
+			}),
+		)
+		assert.equal(record.isFailure, true)
+		assert.deepStrictEqual(record.value, { errorClass: 2, errorCode: 32 })
+	})
+
+	test('should decode any-value [10] carrying a double', () => {
+		const record = decodeSingle(
+			buildAck((buf) => {
+				baAsn1.encodeOpeningTag(buf, 10)
+				baAsn1.bacappEncodeApplicationData(buf, {
+					type: ApplicationTag.DOUBLE,
+					value: 1234.5678,
+				})
+				baAsn1.encodeClosingTag(buf, 10)
+			}),
+		)
+		assert.equal(record.valueType, ApplicationTag.DOUBLE)
+		assert.ok(Math.abs((record.value as number) - 1234.5678) < 1e-9)
+	})
+
+	test('should decode any-value [10] carrying a character string', () => {
+		const record = decodeSingle(
+			buildAck((buf) => {
+				baAsn1.encodeOpeningTag(buf, 10)
+				baAsn1.bacappEncodeApplicationData(buf, {
+					type: ApplicationTag.CHARACTER_STRING,
+					value: 'trend-note',
+				})
+				baAsn1.encodeClosingTag(buf, 10)
+			}),
+		)
+		assert.equal(record.valueType, ApplicationTag.CHARACTER_STRING)
+		assert.equal(record.value, 'trend-note')
+	})
+
+	test('should decode any-value [10] carrying an object identifier', () => {
+		const record = decodeSingle(
+			buildAck((buf) => {
+				baAsn1.encodeOpeningTag(buf, 10)
+				baAsn1.bacappEncodeApplicationData(buf, {
+					type: ApplicationTag.OBJECTIDENTIFIER,
+					value: { type: ObjectType.ANALOG_INPUT, instance: 42 },
+				})
+				baAsn1.encodeClosingTag(buf, 10)
+			}),
+		)
+		assert.equal(record.valueType, ApplicationTag.OBJECTIDENTIFIER)
+		assert.deepStrictEqual(record.value, {
+			type: ObjectType.ANALOG_INPUT,
+			instance: 42,
+		})
+	})
+
+	test('should decode boolean-value record followed by status flags', () => {
+		const applicationData = utils.getBuffer()
+		baAsn1.encodeOpeningTag(applicationData, 0)
+		baAsn1.bacappEncodeApplicationData(applicationData, {
+			type: ApplicationTag.DATE,
+			value: new Date(2024, 1, 3),
+		})
+		baAsn1.bacappEncodeApplicationData(applicationData, {
+			type: ApplicationTag.TIME,
+			value: new Date(2024, 1, 3, 12, 15, 30, 0),
+		})
+		baAsn1.encodeClosingTag(applicationData, 0)
+		baAsn1.encodeOpeningTag(applicationData, 1)
+		baAsn1.encodeTag(applicationData, 1, true, 1)
+		applicationData.buffer.writeUInt8(1, applicationData.offset)
+		applicationData.offset += 1
+		baAsn1.encodeClosingTag(applicationData, 1)
+		baAsn1.encodeContextBitstring(applicationData, 2, {
+			bitsUsed: 4,
+			value: [0b0100],
+		})
+
+		const buffer = utils.getBuffer()
+		ReadRange.encodeAcknowledge(
+			buffer,
+			{ type: 20, instance: 0 },
+			131,
+			0xffffffff,
+			{ bitsUsed: 3, value: [0] },
+			1,
+			applicationData.buffer.slice(0, applicationData.offset),
+			ReadRangeType.BY_POSITION,
+			0,
+		)
+
+		const result = ReadRange.decodeAcknowledge(
+			buffer.buffer,
+			0,
+			buffer.offset,
+		)
+		assert.ok(result?.values)
+		const record = result.values![0]
+		assert.strictEqual(record.value, true)
+		assert.ok(record.status)
 	})
 })

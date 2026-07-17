@@ -7,8 +7,10 @@ import * as baApdu from '../../src/lib/apdu'
 import * as baBvlc from '../../src/lib/bvlc'
 import {
 	GetEventInformation,
+	ReadProperty,
 	RegisterForeignDevice,
 	WhoIs,
+	WriteProperty,
 } from '../../src/lib/services'
 import {
 	BvlcResultFormat,
@@ -18,6 +20,7 @@ import {
 	ServicesSupported,
 	TimeStamp,
 } from '../../src'
+import { PduConReqBit, PduType } from '../../src/lib/enum'
 
 test.describe('bacnet - client', () => {
 	test('should successfuly encode a bitstring > 32 bits', () => {
@@ -129,6 +132,134 @@ test.describe('bacnet - client', () => {
 		assert.deepStrictEqual(events, expected.events)
 	})
 
+	test('getEventInformation should request additional pages when moreEvents is true', async () => {
+		const client = Object.create(BACnetClient.prototype) as BACnetClient & {
+			_requestManager: { add: (invokeId: number) => Promise<any> }
+			_getInvokeId: () => number
+			_getApduBuffer: () => { buffer: Buffer; offset: number }
+			sendBvlc: (
+				receiver: { address: string } | null,
+				buffer: { buffer: Buffer; offset: number },
+			) => void
+		}
+		const sentRequests: Buffer[] = []
+		const receiver = { address: '127.0.0.1' }
+
+		const response1 = {
+			buffer: Buffer.alloc(1482),
+			offset: 0,
+		}
+		GetEventInformation.encodeAcknowledge(
+			response1,
+			[
+				{
+					objectId: { type: 0, instance: 101 },
+					eventState: EventState.NORMAL,
+					acknowledgedTransitions: { value: [1], bitsUsed: 3 },
+					eventTimeStamps: [
+						{ type: TimeStamp.SEQUENCE_NUMBER, value: 1 },
+						{ type: TimeStamp.SEQUENCE_NUMBER, value: 2 },
+						{ type: TimeStamp.SEQUENCE_NUMBER, value: 3 },
+					],
+					notifyType: NotifyType.EVENT,
+					eventEnable: { value: [7], bitsUsed: 3 },
+					eventPriorities: [1, 2, 3],
+				},
+			],
+			true,
+		)
+
+		const response2 = {
+			buffer: Buffer.alloc(1482),
+			offset: 0,
+		}
+		GetEventInformation.encodeAcknowledge(
+			response2,
+			[
+				{
+					objectId: { type: 0, instance: 102 },
+					eventState: EventState.NORMAL,
+					acknowledgedTransitions: { value: [1], bitsUsed: 3 },
+					eventTimeStamps: [
+						{ type: TimeStamp.SEQUENCE_NUMBER, value: 4 },
+						{ type: TimeStamp.SEQUENCE_NUMBER, value: 5 },
+						{ type: TimeStamp.SEQUENCE_NUMBER, value: 6 },
+					],
+					notifyType: NotifyType.EVENT,
+					eventEnable: { value: [7], bitsUsed: 3 },
+					eventPriorities: [1, 2, 3],
+				},
+			],
+			false,
+		)
+
+		let callCount = 0
+		client._getInvokeId = () => 40 + callCount
+		client._getApduBuffer = () => ({
+			buffer: Buffer.alloc(1482),
+			offset: 4,
+		})
+		client.sendBvlc = (_receiver, buffer) => {
+			sentRequests.push(
+				Buffer.from(buffer.buffer.subarray(0, buffer.offset)),
+			)
+		}
+		client._requestManager = {
+			add: async () => {
+				callCount += 1
+				if (callCount === 1) {
+					return {
+						buffer: response1.buffer,
+						offset: 0,
+						length: response1.offset,
+					}
+				}
+				return {
+					buffer: response2.buffer,
+					offset: 0,
+					length: response2.offset,
+				}
+			},
+		}
+
+		const events = await client.getEventInformation(receiver)
+		assert.strictEqual(events.length, 2)
+		assert.strictEqual(sentRequests.length, 2)
+
+		const firstReq = sentRequests[0]
+		assert.ok(firstReq)
+		const firstNpdu = baNpdu.decode(firstReq, 4)
+		assert.ok(firstNpdu)
+		const firstApdu = baApdu.decodeConfirmedServiceRequest(
+			firstReq,
+			4 + firstNpdu.len,
+		)
+		const firstPayloadOffset = 4 + firstNpdu.len + firstApdu.len
+		const firstReqDecoded = GetEventInformation.decode(
+			firstReq,
+			firstPayloadOffset,
+		)
+		assert.strictEqual(firstReqDecoded.lastReceivedObjectId, null)
+
+		const secondReq = sentRequests[1]
+		assert.ok(secondReq)
+		const secondNpdu = baNpdu.decode(secondReq, 4)
+		assert.ok(secondNpdu)
+		const secondApdu = baApdu.decodeConfirmedServiceRequest(
+			secondReq,
+			4 + secondNpdu.len,
+		)
+		const secondPayloadOffset = 4 + secondNpdu.len + secondApdu.len
+		const secondReqDecoded = GetEventInformation.decode(
+			secondReq,
+			secondPayloadOffset,
+		)
+		assert.deepStrictEqual(secondReqDecoded.lastReceivedObjectId, {
+			type: 0,
+			instance: 101,
+		})
+	})
+
 	test('registerForeignDevice should send BVLC register and resolve on success result', async () => {
 		const client = Object.create(BACnetClient.prototype) as BACnetClient & {
 			_settings: { apduTimeout: number }
@@ -169,6 +300,140 @@ test.describe('bacnet - client', () => {
 			sentData.length - bvlc.len,
 		)
 		assert.strictEqual(payload.ttl, 60)
+	})
+
+	test('simple ack should resolve with payload offset/length after APDU header only once', () => {
+		const client = Object.create(BACnetClient.prototype) as BACnetClient & {
+			_requestManager: {
+				resolve: (
+					invokeId: number,
+					err: Error | null,
+					result?: { offset: number; length: number; buffer: Buffer },
+				) => void
+			}
+			_handlePdu: (
+				buffer: Buffer,
+				offset: number,
+				length: number,
+				header: {
+					apduType: number
+					sender: { address: string }
+					expectingReply: boolean
+					confirmedService: boolean
+				},
+			) => void
+		}
+
+		let resolved:
+			| { invokeId: number; offset: number; length: number }
+			| undefined
+		client._requestManager = {
+			resolve: (invokeId, _err, result) => {
+				resolved = {
+					invokeId,
+					offset: result?.offset ?? -1,
+					length: result?.length ?? -1,
+				}
+			},
+		}
+
+		const buffer = Buffer.alloc(16)
+		const apdu = { buffer, offset: 0 }
+		baApdu.encodeSimpleAck(apdu, PduType.SIMPLE_ACK, 5, 7)
+		buffer[apdu.offset++] = 0xaa
+		buffer[apdu.offset++] = 0xbb
+
+		client._handlePdu(buffer, 0, apdu.offset, {
+			apduType: PduType.SIMPLE_ACK,
+			sender: { address: '127.0.0.1:47808' },
+			expectingReply: false,
+			confirmedService: false,
+		})
+
+		assert.ok(resolved)
+		assert.equal(resolved.invokeId, 7)
+		assert.equal(resolved.offset, 3)
+		assert.equal(resolved.length, 2)
+	})
+
+	test('segmentation tracking should be isolated per invokeId', () => {
+		const client = Object.create(BACnetClient.prototype) as BACnetClient & {
+			_processSegment: (...args: any[]) => void
+			_segmentAckResponse: (
+				_receiver: { address: string },
+				negative: boolean,
+			) => void
+			_performDefaultSegmentHandling: () => void
+		}
+		let negativeAcks = 0
+		client._segmentAckResponse = (_receiver, negative) => {
+			if (negative) negativeAcks++
+		}
+		client._performDefaultSegmentHandling = () => {}
+
+		const makeMsg = (invokeId: number, sequence: number) =>
+			({
+				type:
+					PduType.CONFIRMED_REQUEST |
+					PduConReqBit.SEGMENTED_MESSAGE |
+					PduConReqBit.MORE_FOLLOWS,
+				invokeId,
+				sequencenumber: sequence,
+				proposedWindowNumber: 10,
+				header: {
+					apduType: PduType.CONFIRMED_REQUEST,
+					sender: { address: '127.0.0.1:47808' },
+					expectingReply: true,
+					confirmedService: true,
+				},
+			}) as any
+
+		client._processSegment(makeMsg(1, 0), true, Buffer.alloc(0), 0, 0)
+		client._processSegment(makeMsg(1, 1), true, Buffer.alloc(0), 0, 0)
+		client._processSegment(makeMsg(2, 0), true, Buffer.alloc(0), 0, 0)
+
+		assert.equal(negativeAcks, 0)
+	})
+
+	test('segment ack PDU should not be routed through segment reassembly', () => {
+		const client = Object.create(BACnetClient.prototype) as BACnetClient & {
+			_handlePdu: (
+				buffer: Buffer,
+				offset: number,
+				length: number,
+				header: {
+					apduType: number
+					sender: { address: string }
+					expectingReply: boolean
+					confirmedService: boolean
+				},
+			) => void
+			_processSegment: () => void
+			_processSegmentAck: () => void
+		}
+
+		let routedToSegment = false
+		let routedToSegmentAck = false
+		client._processSegment = () => {
+			routedToSegment = true
+		}
+		client._processSegmentAck = () => {
+			routedToSegmentAck = true
+		}
+
+		const buffer = Buffer.alloc(8)
+		const apdu = { buffer, offset: 0 }
+		baApdu.encodeSegmentAck(apdu, PduType.SEGMENT_ACK, 7, 3, 10)
+
+		client._handlePdu(buffer, 0, apdu.offset, {
+			apduType: PduType.SEGMENT_ACK,
+			sender: { address: '127.0.0.1:47808' },
+			expectingReply: false,
+			confirmedService: false,
+		})
+
+		assert.equal(routedToSegment, false)
+		assert.equal(routedToSegmentAck, true)
 	})
 
 	test('registerForeignDevice should accept BVLC result sender without default port', async () => {
@@ -785,5 +1050,93 @@ test.describe('bacnet - client', () => {
 			() => client.whoIsThroughBBMD({}),
 			/whoIsThroughBBMD requires bbmd\.address/,
 		)
+	})
+
+	const createWireCaptureClient = () => {
+		const client = Object.create(BACnetClient.prototype) as BACnetClient & {
+			_settings: { apduTimeout: number }
+			_getApduBuffer: () => { buffer: Buffer; offset: number }
+			_requestManager: { add: (invokeId: number) => Promise<never> }
+			_send: (
+				buffer: { buffer: Buffer; offset: number },
+				receiver?: { address?: string },
+			) => void
+		}
+		const captured: { sentData?: Buffer } = {}
+		client._settings = { apduTimeout: 100 }
+		client._getApduBuffer = () => ({
+			buffer: Buffer.alloc(1482),
+			offset: 4,
+		})
+		client._requestManager = {
+			add: () => Promise.reject(new Error('STUB_NO_RESPONSE')),
+		}
+		client._send = (buffer) => {
+			captured.sentData = Buffer.from(
+				buffer.buffer.subarray(0, buffer.offset),
+			)
+		}
+		return { client, captured }
+	}
+
+	const decodeServicePayloadOffset = (sentData: Buffer) => {
+		const bvlc = baBvlc.decode(sentData, 0)
+		assert.ok(bvlc)
+		const npdu = baNpdu.decode(sentData, bvlc.len)
+		assert.ok(npdu)
+		const apdu = baApdu.decodeConfirmedServiceRequest(
+			sentData,
+			bvlc.len + npdu.len,
+		)
+		return bvlc.len + npdu.len + apdu.len
+	}
+
+	test('writeProperty should encode arrayIndex 0 unchanged on the wire', async () => {
+		const { client, captured } = createWireCaptureClient()
+
+		await assert.rejects(
+			client.writeProperty(
+				{ address: '127.0.0.1' },
+				{ type: 17, instance: 1 },
+				123, // PropertyIdentifier.WEEKLY_SCHEDULE
+				7 as any,
+				{ arrayIndex: 0, invokeId: 1 },
+			),
+			/STUB_NO_RESPONSE/,
+		)
+
+		assert.ok(captured.sentData)
+		const payloadOffset = decodeServicePayloadOffset(captured.sentData)
+		const request = WriteProperty.decode(
+			captured.sentData,
+			payloadOffset,
+			captured.sentData.length - payloadOffset,
+		)
+		assert.ok(request)
+		assert.strictEqual(request.value.property.index, 0)
+	})
+
+	test('readProperty should encode arrayIndex 0 unchanged on the wire', async () => {
+		const { client, captured } = createWireCaptureClient()
+
+		await assert.rejects(
+			client.readProperty(
+				{ address: '127.0.0.1' },
+				{ type: 17, instance: 1 },
+				123, // PropertyIdentifier.WEEKLY_SCHEDULE
+				{ arrayIndex: 0, invokeId: 1 },
+			),
+			/STUB_NO_RESPONSE/,
+		)
+
+		assert.ok(captured.sentData)
+		const payloadOffset = decodeServicePayloadOffset(captured.sentData)
+		const request = ReadProperty.decode(
+			captured.sentData,
+			payloadOffset,
+			captured.sentData.length - payloadOffset,
+		)
+		assert.ok(request)
+		assert.strictEqual(request.property.index, 0)
 	})
 })

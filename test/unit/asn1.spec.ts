@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert'
 
 import * as baAsn1 from '../../src/lib/asn1'
-import { ApplicationTag } from '../../src/lib/enum'
+import { ApplicationTag, CharacterStringEncoding } from '../../src/lib/enum'
 
 test.describe('bacnet - ASN1 layer', () => {
 	test.describe('decodeUnsigned', () => {
@@ -209,6 +209,25 @@ test.describe('bacnet - ASN1 layer', () => {
 		})
 	})
 
+	test.describe('decodeBacnetDatetime', () => {
+		test('should decode day-of-month, not day-of-week', () => {
+			// 2026-07-15 is a Wednesday: getDay() = 3, getDate() = 15.
+			const buffer = { buffer: Buffer.alloc(32), offset: 0 }
+			const datetime = new Date(2026, 6, 15, 10, 30, 45, 500)
+			baAsn1.encodeApplicationDate(buffer, datetime)
+			baAsn1.encodeApplicationTime(buffer, datetime)
+
+			const result = baAsn1.decodeBacnetDatetime(buffer.buffer, 0)
+			assert.equal(result.value.getDate(), 15)
+			assert.equal(result.value.getFullYear(), 2026)
+			assert.equal(result.value.getMonth(), 6)
+			assert.equal(result.value.getHours(), 10)
+			assert.equal(result.value.getMinutes(), 30)
+			assert.equal(result.value.getSeconds(), 45)
+			assert.equal(result.value.getMilliseconds(), 500)
+		})
+	})
+
 	test.describe('decodeWeekNDay', () => {
 		test('should decode valid WEEKNDAY payload', () => {
 			const buffer = { buffer: Buffer.alloc(8), offset: 0 }
@@ -357,6 +376,111 @@ test.describe('bacnet - ASN1 layer', () => {
 						value: Number.POSITIVE_INFINITY,
 					}),
 				/invalid timestamp/,
+			)
+		})
+	})
+
+	test.describe('ucs4 character string', () => {
+		test('should round-trip UCS-4 with emoji', () => {
+			const buffer = { buffer: Buffer.alloc(64), offset: 0 }
+			const value = 'A😀'
+
+			baAsn1.bacappEncodeApplicationData(buffer, {
+				type: ApplicationTag.CHARACTER_STRING,
+				value,
+				encoding: CharacterStringEncoding.UCS_4,
+			})
+
+			const decoded = baAsn1.bacappDecodeApplicationData(
+				buffer.buffer,
+				0,
+				buffer.offset,
+				0,
+				0,
+			)
+			assert.ok(decoded)
+			assert.equal(decoded.type, ApplicationTag.CHARACTER_STRING)
+			assert.equal(decoded.value, value)
+			assert.equal(decoded.encoding, CharacterStringEncoding.UCS_4)
+		})
+
+		test('should decode UCS-4 little-endian with BOM', () => {
+			const buffer = { buffer: Buffer.alloc(64), offset: 0 }
+			// 1 byte encoding + 4 byte BOM + 4 byte codepoint
+			baAsn1.encodeTag(buffer, ApplicationTag.CHARACTER_STRING, false, 9)
+			buffer.buffer[buffer.offset++] = CharacterStringEncoding.UCS_4
+			buffer.buffer[buffer.offset++] = 0xff
+			buffer.buffer[buffer.offset++] = 0xfe
+			buffer.buffer[buffer.offset++] = 0x00
+			buffer.buffer[buffer.offset++] = 0x00
+			buffer.buffer[buffer.offset++] = 0x41
+			buffer.buffer[buffer.offset++] = 0x00
+			buffer.buffer[buffer.offset++] = 0x00
+			buffer.buffer[buffer.offset++] = 0x00
+
+			const decoded = baAsn1.bacappDecodeApplicationData(
+				buffer.buffer,
+				0,
+				buffer.offset,
+				0,
+				0,
+			)
+			assert.ok(decoded)
+			assert.equal(decoded.type, ApplicationTag.CHARACTER_STRING)
+			assert.equal(decoded.value, 'A')
+			assert.equal(decoded.encoding, CharacterStringEncoding.UCS_4)
+		})
+
+		test('should decode UCS-4 and ignore trailing incomplete bytes', () => {
+			const buffer = { buffer: Buffer.alloc(64), offset: 0 }
+			// 1 byte encoding + 4 byte codepoint + 2 trailing bytes
+			baAsn1.encodeTag(buffer, ApplicationTag.CHARACTER_STRING, false, 7)
+			buffer.buffer[buffer.offset++] = CharacterStringEncoding.UCS_4
+			buffer.buffer[buffer.offset++] = 0x00
+			buffer.buffer[buffer.offset++] = 0x00
+			buffer.buffer[buffer.offset++] = 0x00
+			buffer.buffer[buffer.offset++] = 0x42
+			buffer.buffer[buffer.offset++] = 0xde
+			buffer.buffer[buffer.offset++] = 0xad
+
+			const decoded = baAsn1.bacappDecodeApplicationData(
+				buffer.buffer,
+				0,
+				buffer.offset,
+				0,
+				0,
+			)
+			assert.ok(decoded)
+			assert.equal(decoded.type, ApplicationTag.CHARACTER_STRING)
+			assert.equal(decoded.value, 'B')
+			assert.equal(decoded.encoding, CharacterStringEncoding.UCS_4)
+		})
+	})
+
+	test.describe('time hundredths rounding', () => {
+		test('should round milliseconds to nearest hundredth', () => {
+			const buffer = { buffer: Buffer.alloc(16), offset: 0 }
+			baAsn1.encodeApplicationTime(
+				buffer,
+				new Date(2025, 0, 2, 14, 30, 5, 125),
+			)
+
+			assert.deepStrictEqual(
+				Array.from(buffer.buffer.subarray(0, buffer.offset)),
+				[0xb4, 14, 30, 5, 13],
+			)
+		})
+
+		test('should clamp rounded hundredths to 99', () => {
+			const buffer = { buffer: Buffer.alloc(16), offset: 0 }
+			baAsn1.encodeApplicationTime(
+				buffer,
+				new Date(2025, 0, 2, 14, 30, 5, 995),
+			)
+
+			assert.deepStrictEqual(
+				Array.from(buffer.buffer.subarray(0, buffer.offset)),
+				[0xb4, 14, 30, 5, 99],
 			)
 		})
 	})

@@ -15,7 +15,7 @@ import {
 	SubscribeCovPayload,
 	DeviceCommunicationControlPayload,
 	ReinitializeDevicePayload,
-	EventNotificationPayload,
+	EventNotifyDataResult,
 	ReadRangePayload,
 	ObjectOperationPayload,
 	ListElementOperationPayload,
@@ -142,7 +142,7 @@ export interface BACnetClientEvents {
 		content: BaseEventContent & { payload: ReinitializeDevicePayload },
 	) => void
 	eventNotify: (
-		content: BaseEventContent & { payload: EventNotificationPayload },
+		content: BaseEventContent & { payload: EventNotifyDataResult },
 	) => void
 	readRange: (
 		content: BaseEventContent & { payload: ReadRangePayload },
@@ -178,6 +178,30 @@ export interface BACnetClientEvents {
 	) => void
 	registerForeignDevice: (
 		content: BaseEventContent & { payload: RegisterForeignDevicePayload },
+	) => void
+	/** Emitted after a successful Foreign Device Registration response. */
+	fdrRegistered: (
+		content: BaseEventContent & {
+			payload: { address: string; ttl: number; expiresAt: number }
+		},
+	) => void
+	/** Emitted shortly before local FDR expiry (no auto-renew is performed). */
+	fdrExpiring: (
+		content: BaseEventContent & {
+			payload: { address: string; ttl: number; expiresAt: number }
+		},
+	) => void
+	/** Emitted when locally tracked FDR lifetime has expired. */
+	fdrExpired: (
+		content: BaseEventContent & {
+			payload: { address: string; ttl: number; expiredAt: number }
+		},
+	) => void
+	/** Emitted when forwarded traffic is dropped because no active FDR exists. */
+	forwardedNpduDroppedNoFdr: (
+		content: BaseEventContent & {
+			payload: { address: string }
+		},
 	) => void
 	iAm: (content: BaseEventContent & { payload: IAMResult }) => void
 	whoIs: (content: BaseEventContent & { payload: WhoIsResult }) => void

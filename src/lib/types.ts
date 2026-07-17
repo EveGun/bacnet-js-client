@@ -184,6 +184,17 @@ export interface BACNetDevObjRef {
 	deviceIndentifier: BACNetObjectID
 }
 
+export interface BACNetDeviceObjectReference {
+	deviceIdentifier?: BACNetObjectID
+	objectIdentifier: BACNetObjectID
+}
+
+export interface BACNetAuthenticationFactor {
+	formatType: number
+	formatClass: number
+	value: Buffer
+}
+
 /**
  * TODO: when the time comes, drop the default value for the `Tag` generic
  *       parameter to enforce type safety everywhere throughout the library.
@@ -253,7 +264,11 @@ export interface BACNetTimeValueEntry {
 export type BACNetWeeklySchedulePayload = BACNetTimeValueEntry[][]
 
 export interface BACNetSpecialEventEntry {
-	date: BACNetDateAppData | BACNetDateRangeAppData | BACNetWeekNDayAppData
+	date:
+		| BACNetDateAppData
+		| BACNetDateRangeAppData
+		| BACNetWeekNDayAppData
+		| BACNetAppData<ApplicationTag.OBJECTIDENTIFIER, BACNetObjectID>
 	events: BACNetTimeValueEntry[]
 	priority: BACNetAppData<ApplicationTag.UNSIGNED_INTEGER> | number
 }
@@ -272,12 +287,64 @@ export type BACNetCalendarDateListEntry =
 
 export type BACNetCalendarDateListPayload = BACNetCalendarDateListEntry[]
 
+export type BACNetArraySizeValue =
+	| number
+	| BACNetAppData<ApplicationTag.UNSIGNED_INTEGER, number>
+
+/**
+ * Supported payloads for writing `WEEKLY_SCHEDULE` (BACnetARRAY[7] of
+ * BACnetDailySchedule).
+ * - full property (`arrayIndex = ASN1_ARRAY_ALL`): `BACNetTimeValueEntry[][]`
+ *   with exactly 7 days
+ * - single day (`arrayIndex = 1..7`): `BACNetTimeValueEntry[]` (an empty
+ *   array clears the day)
+ * - array size (`arrayIndex = 0`): unsigned integer length; must be 7 since
+ *   the array is fixed-size per ASHRAE 135 §12.24.7
+ */
+export type BACNetWeeklyScheduleWriteValue =
+	| BACNetWeeklySchedulePayload
+	| BACNetTimeValueEntry[]
+	| BACNetArraySizeValue
+
+/**
+ * Supported payloads for writing `EXCEPTION_SCHEDULE` (resizable BACnetARRAY
+ * of BACnetSpecialEvent).
+ * - full property (`arrayIndex = ASN1_ARRAY_ALL`): `BACNetSpecialEventEntry[]`
+ * - single entry (`arrayIndex >= 1`): one `BACNetSpecialEventEntry`
+ *   (preferred form; a one-element array is also accepted for compatibility)
+ * - array size (`arrayIndex = 0`): unsigned integer length. Resizing via
+ *   index 0 is valid per the BACnet array model (ASHRAE 135 §19.2.1) but
+ *   device-dependent — many devices reject it or only support truncation.
+ */
+export type BACNetExceptionScheduleWriteValue =
+	| BACNetExceptionSchedulePayload
+	| BACNetSpecialEventEntry
+	| BACNetArraySizeValue
+
+/**
+ * Supported payload for writing `EFFECTIVE_PERIOD`: `[startDate, endDate]`.
+ *
+ * `EFFECTIVE_PERIOD` is a `BACnetDateRange`, not a BACnetARRAY — indexed
+ * access (any `arrayIndex`, including 0) is rejected by the encoder.
+ */
+export type BACNetEffectivePeriodWriteValue = BACNetEffectivePeriodPayload
+
+/**
+ * Supported payload for writing `DATE_LIST`: a calendar entry array.
+ *
+ * `DATE_LIST` is a `BACnetLIST of BACnetCalendarEntry`, not a BACnetARRAY —
+ * indexed access (any `arrayIndex`, including 0) is rejected by the encoder.
+ * Modify it with a full-property write or the AddListElement /
+ * RemoveListElement services.
+ */
+export type BACNetCalendarDateListWriteValue = BACNetCalendarDateListPayload
+
 export type BACNetWritePropertyValues =
 	| BACNetAppData[]
-	| BACNetWeeklySchedulePayload
-	| BACNetExceptionSchedulePayload
-	| BACNetEffectivePeriodPayload
-	| BACNetCalendarDateListPayload
+	| BACNetWeeklyScheduleWriteValue
+	| BACNetExceptionScheduleWriteValue
+	| BACNetEffectivePeriodWriteValue
+	| BACNetCalendarDateListWriteValue
 
 /**
  * Map between BACnet Application Tags and TypeScript types.
@@ -517,6 +584,24 @@ export interface ClientOptions {
 	broadcastAddress?: string
 	apduTimeout?: number
 	reuseAddr?: boolean
+	/**
+	 * Abort segmented responses when this client did not advertise
+	 * segmented-response support in the original request.
+	 */
+	abortOnSegmentedResponseWhenNoSegAccepted?: boolean
+	/**
+	 * When true, FORWARDED_NPDU packets are dropped (with a
+	 * `forwardedNpduDroppedNoFdr` event) unless this client holds an active
+	 * foreign-device registration.
+	 *
+	 * Off by default: BBMDs re-broadcast Forwarded-NPDU from BDT peers on
+	 * their local subnet, so ordinary BACnet/IP devices legitimately receive
+	 * FORWARDED_NPDU without ever registering as a foreign device — and the
+	 * receiver cannot distinguish that broadcast from a foreign-device
+	 * unicast. Enable only when this client runs as a pure foreign device on
+	 * a network where unsolicited forwarded traffic should be rejected.
+	 */
+	requireActiveFdrForForwardedNpdu?: boolean
 }
 
 export interface WhoIsOptions {
@@ -524,13 +609,70 @@ export interface WhoIsOptions {
 	highLimit?: number
 }
 
+/**
+ * Caller-controlled transport options for sending a confirmed request as a
+ * segmented transfer. The library never chooses segmentation on its own:
+ * segmenting a request requires the caller to set `enabled: true` and to
+ * supply the remote device's maximum APDU length.
+ */
+export interface SegmentedRequestOptions {
+	/** Explicit caller intent to send this request segmented. */
+	enabled: boolean
+	/**
+	 * Maximum APDU length (in octets) the remote device accepts for
+	 * incoming requests, e.g. from the device's I-Am / max-apdu-length-accepted.
+	 * Each transmitted segment APDU will not exceed this value. This is
+	 * distinct from `ServiceOptions.maxApdu`, which advertises the local
+	 * maximum APDU length accepted for responses.
+	 *
+	 * When `enabled` is false, this value (if provided) is still used to
+	 * validate the unsegmented request size before sending; an oversized
+	 * request throws `ApduTooLargeError` instead of being sent.
+	 */
+	remoteMaxApduLength: number
+	/**
+	 * Maximum number of segments the remote device accepts per request
+	 * (from max-segments-accepted, as a plain count). When provided, a
+	 * request requiring more segments throws `SegmentCountExceededError`
+	 * locally before anything is sent.
+	 */
+	remoteMaxSegmentsAccepted?: number
+	/**
+	 * Proposed window size (1..127) encoded in every segment. The remote
+	 * device may reply with a smaller/larger actual window size which the
+	 * library then applies. Defaults to 1.
+	 */
+	proposedWindowSize?: number
+	/** Maximum retransmissions of a segment window. Defaults to 3. */
+	maxRetries?: number
+	/**
+	 * Milliseconds to wait for a SegmentACK before retransmitting the
+	 * current window. Defaults to the client's `apduTimeout`.
+	 */
+	segmentAckTimeout?: number
+}
+
 export interface ServiceOptions {
 	maxSegments?: number
 	maxApdu?: number
 	invokeId?: number
+	/**
+	 * Explicit caller-selected segmented transport for this request.
+	 * Absent or `enabled: false` means the request is sent unsegmented.
+	 */
+	segmentedRequest?: SegmentedRequestOptions
+}
+
+export interface AcknowledgeAlarmOptions extends ServiceOptions {
+	/**
+	 * BACnet process identifier required by `AcknowledgeAlarm`.
+	 * This library now enforces it at runtime.
+	 */
+	acknowledgingProcessId: number
 }
 
 export interface ReadPropertyOptions extends ServiceOptions {
+	/** Optional array index. Use `0` for array length and `ASN1_ARRAY_ALL` for full value. */
 	arrayIndex?: number
 }
 
@@ -539,6 +681,7 @@ export interface WriteFileOptions extends ServiceOptions {
 }
 
 export interface WritePropertyOptions extends ServiceOptions {
+	/** Optional array index. Supports indexed schedule/calendar writes and array-length writes (`0`). */
 	arrayIndex?: number
 	priority?: number
 }
@@ -731,6 +874,10 @@ export interface EventNotificationPayload extends BasicServicePayload {
 	ackRequired: boolean
 	fromState: number
 	toState: number
+	/**
+	 * Decoded notification parameters in BACnet application-data form.
+	 * Use `EventNotifyDataParams` for event-type-specific decoded fields.
+	 */
 	eventValues: BACNetAppData[]
 }
 
@@ -765,16 +912,27 @@ export interface LogRecordStatusFlags {
 }
 
 /**
+ * BACnet Error for the failure [8] log-datum choice per ASHRAE 135 §12.25.
+ */
+export interface LogRecordFailure {
+	errorClass: number
+	errorCode: number
+}
+
+/**
  * Union type for log record values per ASHRAE 135 §12.25.
  * log-datum CHOICE can contain various types depending on the logged property.
  */
 export type LogRecordValue =
-	| number // REAL, ENUMERATED, UNSIGNED_INTEGER, SIGNED_INTEGER
+	| number // REAL, ENUMERATED, UNSIGNED_INTEGER, SIGNED_INTEGER, DOUBLE
 	| boolean // BOOLEAN
-	| BACNetBitString // log-status bitstring
+	| BACNetBitString // log-status or bitstring-value
 	| null // NULL
-	| string // CHARACTER_STRING
-	| BACNetObjectID // OBJECTIDENTIFIER
+	| string // CHARACTER_STRING (via any-value)
+	| BACNetObjectID // OBJECTIDENTIFIER (via any-value)
+	| Buffer // OCTET_STRING (via any-value)
+	| Date // DATE / TIME (via any-value)
+	| LogRecordFailure // failure (BACnetError)
 
 /**
  * LogRecord per ASHRAE 135 §12.25.
@@ -803,6 +961,17 @@ export interface LogRecord {
 	 */
 	isTimeChange?: boolean
 	/**
+	 * True if this is a failure record (the monitored property read failed).
+	 * The value is then a LogRecordFailure with errorClass/errorCode.
+	 * Undefined for all other record types.
+	 */
+	isFailure?: boolean
+	/**
+	 * ApplicationTag describing the decoded value. Useful for any-value [10]
+	 * records where the datum can be any application-tagged type.
+	 */
+	valueType?: number
+	/**
 	 * Present only for log-status records. Indicates which special status applies.
 	 */
 	logStatus?: LogStatusFlags
@@ -821,6 +990,17 @@ export interface ReadRangeAcknowledge {
 	rangeBuffer: Buffer
 	values?: LogRecord[]
 	len: number
+}
+
+export interface ReadRangeOptions extends ServiceOptions {
+	/** Property to read (default: LOG_BUFFER = 131) */
+	propertyId?: number
+	/** Array index (default: ARRAY_ALL) */
+	arrayIndex?: number
+	/** Range selection type (default: BY_POSITION) */
+	requestType?: number
+	/** Reference time for BY_TIME requests */
+	time?: Date
 }
 
 export interface EnrollmentSummary {
@@ -855,6 +1035,10 @@ export interface EnrollmentSummaryAcknowledge {
 }
 
 export interface EventNotifyDataParams {
+	/**
+	 * Core fields from `BACnetEventNotificationData`. The optional `event*` groups
+	 * below are populated according to `eventType`.
+	 */
 	processId: number
 	initiatingObjectId: {
 		type: number
@@ -918,9 +1102,77 @@ export interface EventNotifyDataParams {
 	unsignedRangeExceedingValue?: number
 	unsignedRangeStatusFlags?: BACNetBitString
 	unsignedRangeExceededLimit?: number
+
+	/**
+	 * Raw `BACnetNotificationParameters` payload including the original choice tag.
+	 * This can be used by callers that need vendor-specific post-processing.
+	 */
+	eventValuesRaw?: Buffer
+
+	// COMMAND_FAILURE
+	commandFailureCommandValue?: Buffer
+	commandFailureCommandValueDecoded?: BACNetAppData
+	commandFailureStatusFlags?: BACNetBitString
+	commandFailureFeedbackValue?: Buffer
+	commandFailureFeedbackValueDecoded?: BACNetAppData
+
+	// DOUBLE_OUT_OF_RANGE
+	doubleOutOfRangeExceedingValue?: number
+	doubleOutOfRangeStatusFlags?: BACNetBitString
+	doubleOutOfRangeDeadband?: number
+	doubleOutOfRangeExceededLimit?: number
+
+	// SIGNED_OUT_OF_RANGE
+	signedOutOfRangeExceedingValue?: number
+	signedOutOfRangeStatusFlags?: BACNetBitString
+	signedOutOfRangeDeadband?: number
+	signedOutOfRangeExceededLimit?: number
+
+	// UNSIGNED_OUT_OF_RANGE
+	unsignedOutOfRangeExceedingValue?: number
+	unsignedOutOfRangeStatusFlags?: BACNetBitString
+	unsignedOutOfRangeDeadband?: number
+	unsignedOutOfRangeExceededLimit?: number
+
+	// CHANGE_OF_CHARACTERSTRING
+	changeOfCharacterStringChangedValue?: string
+	changeOfCharacterStringStatusFlags?: BACNetBitString
+	changeOfCharacterStringAlarmValue?: string
+
+	// CHANGE_OF_STATUS_FLAGS
+	changeOfStatusFlagsPresentValue?: Buffer
+	changeOfStatusFlagsPresentValueDecoded?: BACNetAppData
+	changeOfStatusFlagsReferencedFlags?: BACNetBitString
+
+	// CHANGE_OF_RELIABILITY
+	changeOfReliabilityReliability?: number
+	changeOfReliabilityStatusFlags?: BACNetBitString
+	changeOfReliabilityPropertyValues?: Buffer
+	changeOfReliabilityPropertyValuesDecoded?: BACNetAppData
+
+	// CHANGE_OF_DISCRETE_VALUE
+	changeOfDiscreteValueNewValue?: BACNetAppData
+	changeOfDiscreteValueStatusFlags?: BACNetBitString
+
+	// CHANGE_OF_TIMER
+	changeOfTimerNewState?: number
+	changeOfTimerStatusFlags?: BACNetBitString
+	changeOfTimerUpdateTime?: Date
+	changeOfTimerLastStateChange?: number
+	changeOfTimerInitialTimeout?: number
+	changeOfTimerExpirationTime?: Date
+
+	// ACCESS_EVENT
+	accessEventAccessEvent?: number
+	accessEventStatusFlags?: BACNetBitString
+	accessEventTag?: number
+	accessEventTime?: BACNetTimestamp
+	accessEventAccessCredential?: BACNetDeviceObjectReference
+	accessEventAuthenticationFactor?: BACNetAuthenticationFactor
 }
 
 export interface EventNotifyDataResult extends EventNotifyDataParams {
+	/** Bytes consumed while decoding the EventNotification payload. */
 	len: number
 }
 
@@ -996,7 +1248,7 @@ export interface DeviceObjectResult {
 
 export interface WritePropertyMultipleValue {
 	property: PropertyReference
-	value: BACNetAppData[]
+	value: BACNetWritePropertyValues
 	priority: number
 }
 
