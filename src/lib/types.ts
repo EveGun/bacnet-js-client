@@ -845,6 +845,17 @@ export interface ReadRangeAcknowledge {
 	len: number
 }
 
+export interface ReadRangeOptions extends ServiceOptions {
+	/** Property to read (default: LOG_BUFFER = 131) */
+	propertyId?: number
+	/** Array index (default: ARRAY_ALL) */
+	arrayIndex?: number
+	/** Range selection type (default: BY_POSITION) */
+	requestType?: number
+	/** Reference time for BY_TIME requests */
+	time?: Date
+}
+
 export interface EnrollmentSummary {
 	objectId: BACNetObjectID
 	eventType: number
