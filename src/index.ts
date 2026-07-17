@@ -5,3 +5,4 @@ export * from './lib/bitstring'
 
 export default BACnetClient
 export * from './lib/types'
+export * from './lib/errors'

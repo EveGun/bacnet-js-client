@@ -93,7 +93,15 @@ import {
 	EnrollmentOptions,
 	EnrollmentSummaryAcknowledge,
 	EventNotifyDataParams,
+	NetworkOpResult,
+	SegmentedRequestOptions,
 } from './types'
+import {
+	ApduTooLargeError,
+	InvalidSegmentedRequestError,
+	SegmentCountExceededError,
+	SegmentAckTimeoutError,
+} from './errors'
 import { format } from 'util'
 import {
 	UnconfirmedServiceChoice,
@@ -131,9 +139,62 @@ const DEFAULT_HOP_COUNT = 0xff
 const BVLC_HEADER_LENGTH = 4
 const BVLC_FWD_HEADER_LENGTH = 10 // FORWARDED_NPDU
 
+// ASHRAE 135 - 20.1.2: fixed part of a BACnet-Confirmed-Request-PDU is
+// 4 octets unsegmented and 6 octets segmented (adds sequence-number and
+// proposed-window-size). The max-apdu-length-accepted limit applies to the
+// APDU alone; BVLC and NPDU octets are not counted against it.
+const CONFIRMED_REQUEST_HEADER_LENGTH = 4
+const SEGMENTED_CONFIRMED_REQUEST_HEADER_LENGTH = 6
+// ASHRAE 135 - 20.1.6.5: window sizes are in the range 1..127
+const MIN_SEGMENT_WINDOW_SIZE = 1
+const MAX_SEGMENT_WINDOW_SIZE = 127
+const DEFAULT_SEGMENT_MAX_RETRIES = 3
+// Scratch buffer for encoding a segmented service payload before splitting.
+const OUTGOING_SEGMENT_PAYLOAD_BUFFER_LENGTH = 1 << 20
+
 interface SegmentAssemblyState {
 	lastSequenceNumber: number | null
 	segments: Buffer[]
+	/** Segments received since the last SegmentACK we sent */
+	segmentsSinceAck: number
+	/** Inactivity timer that discards an incomplete assembly */
+	timer: NodeJS.Timeout | null
+}
+
+interface OutgoingSegmentTransaction {
+	key: string
+	receiver: BACNetAddress
+	service: ConfirmedServiceChoice
+	invokeId: number
+	/** Local advertisement for the response, unchanged by segmentation */
+	maxSegments: number
+	maxApdu: number
+	/** PDU type octet without segmentation bits */
+	baseType: number
+	payload: Buffer
+	segmentCapacity: number
+	totalSegments: number
+	proposedWindowSize: number
+	/** Window size granted by the remote device (starts at 1 until the
+	 * first SegmentACK is received, per ASHRAE 135 - 5.4.4.2) */
+	actualWindowSize: number
+	/** Absolute index of the first unacknowledged segment. Absolute
+	 * indices are not truncated to one octet; the on-wire sequence number
+	 * is `index & 0xff`, which yields wrap-around at 255 -> 0. */
+	initialSequenceAbs: number
+	retryCount: number
+	maxRetries: number
+	segmentAckTimeout: number
+	timer: NodeJS.Timeout | null
+	done: boolean
+	/** Set once the window containing the final segment has been sent and
+	 * the final service response has been registered with the request
+	 * manager */
+	responseRegistered: boolean
+	responsePromise: Promise<NetworkOpResult> | null
+	resolveTransfer: () => void
+	rejectTransfer: (err: Error) => void
+	transferPromise: Promise<void>
 }
 
 const beU = UnconfirmedServiceChoice
@@ -209,6 +270,11 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 	private _pendingRequestMaxSegments?: Map<number, number>
 
 	private _segmentAssemblyStates?: Map<string, SegmentAssemblyState>
+
+	private _outgoingSegmentTransactions?: Map<
+		string,
+		OutgoingSegmentTransaction
+	>
 
 	private _isClosed = false
 
@@ -341,6 +407,541 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		return `${server ? 'srv' : 'cli'}|${sender}|${msg.invokeId}`
 	}
 
+	private _getOutgoingSegmentTransactions() {
+		if (!this._outgoingSegmentTransactions) {
+			this._outgoingSegmentTransactions = new Map()
+		}
+		return this._outgoingSegmentTransactions
+	}
+
+	private _getOutgoingSegmentKey(
+		address: string | undefined,
+		invokeId: number,
+	): string {
+		const receiver = this._normalizeAddress(address) ?? 'unknown'
+		return `${receiver}|${invokeId}`
+	}
+
+	/**
+	 * Sends a confirmed service request using the caller-selected transport
+	 * strategy: unsegmented by default, segmented only when the caller
+	 * explicitly enabled it. Service-specific payload encoding stays in the
+	 * calling method; this method owns packet construction, size
+	 * validation, the segment state machine and awaiting the response.
+	 */
+	private async _sendConfirmedRequest(args: {
+		receiver: BACNetAddress
+		service: ConfirmedServiceChoice
+		maxSegments: number
+		maxApdu: number
+		invokeId: number
+		acceptSegmentedResponse?: boolean
+		segmentedRequest?: SegmentedRequestOptions
+		encodePayload: (buffer: EncodeBuffer) => void
+	}): Promise<NetworkOpResult> {
+		const baseType =
+			PduType.CONFIRMED_REQUEST |
+			(args.acceptSegmentedResponse &&
+			args.maxSegments !== MaxSegmentsAccepted.SEGMENTS_0
+				? PduConReqBit.SEGMENTED_RESPONSE_ACCEPTED
+				: 0)
+
+		if (args.segmentedRequest?.enabled) {
+			return this._sendSegmentedConfirmedRequest(args, baseType)
+		}
+
+		const buffer = this._getApduBuffer(args.receiver)
+		baNpdu.encode(
+			buffer,
+			NpduControlPriority.NORMAL_MESSAGE | NpduControlBit.EXPECTING_REPLY,
+			args.receiver,
+			null,
+			DEFAULT_HOP_COUNT,
+			NetworkLayerMessageType.WHO_IS_ROUTER_TO_NETWORK,
+			0,
+		)
+		const apduStart = buffer.offset
+		baApdu.encodeConfirmedServiceRequest(
+			buffer,
+			baseType,
+			args.service,
+			args.maxSegments,
+			args.maxApdu,
+			args.invokeId,
+			0,
+			0,
+		)
+		args.encodePayload(buffer)
+		const apduLength = buffer.offset - apduStart
+
+		const remoteLimit = args.segmentedRequest?.remoteMaxApduLength
+		if (remoteLimit !== undefined && apduLength > remoteLimit) {
+			throw new ApduTooLargeError({
+				encodedLength: apduLength,
+				maximumLength: remoteLimit,
+				service: args.service,
+				invokeId: args.invokeId,
+				segmentationAvailable: true,
+			})
+		}
+		// Without a caller-supplied remote limit we preserve the previous
+		// behavior, except that a request physically overflowing the
+		// transport buffer is rejected instead of being sent truncated.
+		if (buffer.offset > buffer.buffer.length) {
+			throw new ApduTooLargeError({
+				encodedLength: apduLength,
+				maximumLength: buffer.buffer.length - apduStart,
+				service: args.service,
+				invokeId: args.invokeId,
+				segmentationAvailable: true,
+			})
+		}
+		this.sendBvlc(args.receiver, buffer)
+		return this._awaitResponse(args.invokeId, args.maxSegments)
+	}
+
+	private async _sendSegmentedConfirmedRequest(
+		args: {
+			receiver: BACNetAddress
+			service: ConfirmedServiceChoice
+			maxSegments: number
+			maxApdu: number
+			invokeId: number
+			segmentedRequest?: SegmentedRequestOptions
+			encodePayload: (buffer: EncodeBuffer) => void
+		},
+		baseType: number,
+	): Promise<NetworkOpResult> {
+		const seg = args.segmentedRequest
+		const remoteMax = seg.remoteMaxApduLength
+		if (
+			!Number.isInteger(remoteMax) ||
+			remoteMax < SEGMENTED_CONFIRMED_REQUEST_HEADER_LENGTH + 1
+		) {
+			throw new InvalidSegmentedRequestError({
+				option: 'remoteMaxApduLength',
+				value: remoteMax,
+				reason: `must be an integer of at least ${
+					SEGMENTED_CONFIRMED_REQUEST_HEADER_LENGTH + 1
+				} octets to fit a segmented request APDU with at least one payload octet`,
+				service: args.service,
+				invokeId: args.invokeId,
+			})
+		}
+		const proposedWindowSize =
+			seg.proposedWindowSize ?? MIN_SEGMENT_WINDOW_SIZE
+		if (
+			!Number.isInteger(proposedWindowSize) ||
+			proposedWindowSize < MIN_SEGMENT_WINDOW_SIZE ||
+			proposedWindowSize > MAX_SEGMENT_WINDOW_SIZE
+		) {
+			throw new InvalidSegmentedRequestError({
+				option: 'proposedWindowSize',
+				value: seg.proposedWindowSize,
+				reason: `must be an integer in the range ${MIN_SEGMENT_WINDOW_SIZE}..${MAX_SEGMENT_WINDOW_SIZE}`,
+				service: args.service,
+				invokeId: args.invokeId,
+			})
+		}
+		const maxRetries = seg.maxRetries ?? DEFAULT_SEGMENT_MAX_RETRIES
+		if (!Number.isInteger(maxRetries) || maxRetries < 0) {
+			throw new InvalidSegmentedRequestError({
+				option: 'maxRetries',
+				value: seg.maxRetries,
+				reason: 'must be a non-negative integer',
+				service: args.service,
+				invokeId: args.invokeId,
+			})
+		}
+		const segmentAckTimeout =
+			seg.segmentAckTimeout ?? this._settings.apduTimeout
+		if (!Number.isInteger(segmentAckTimeout) || segmentAckTimeout <= 0) {
+			throw new InvalidSegmentedRequestError({
+				option: 'segmentAckTimeout',
+				value: seg.segmentAckTimeout,
+				reason: 'must be a positive integer of milliseconds',
+				service: args.service,
+				invokeId: args.invokeId,
+			})
+		}
+		if (
+			seg.remoteMaxSegmentsAccepted !== undefined &&
+			(!Number.isInteger(seg.remoteMaxSegmentsAccepted) ||
+				seg.remoteMaxSegmentsAccepted < 1)
+		) {
+			throw new InvalidSegmentedRequestError({
+				option: 'remoteMaxSegmentsAccepted',
+				value: seg.remoteMaxSegmentsAccepted,
+				reason: 'must be a positive integer',
+				service: args.service,
+				invokeId: args.invokeId,
+			})
+		}
+
+		// Encode the service payload separately from BVLC/NPDU/APDU headers
+		// so it can be split across segments.
+		const payload: EncodeBuffer = {
+			buffer: Buffer.alloc(OUTGOING_SEGMENT_PAYLOAD_BUFFER_LENGTH),
+			offset: 0,
+		}
+		args.encodePayload(payload)
+		if (payload.offset > payload.buffer.length) {
+			throw new ApduTooLargeError({
+				encodedLength: payload.offset,
+				maximumLength: payload.buffer.length,
+				service: args.service,
+				invokeId: args.invokeId,
+				segmentationAvailable: false,
+			})
+		}
+
+		// The remote APDU limit excludes NPDU and BVLC octets, but the
+		// local transport buffer does not, so each segment APDU is capped
+		// by both. Measure the NPDU length with a dry-run encode (it is
+		// identical for every segment to this receiver).
+		const npduProbe: EncodeBuffer = {
+			buffer: Buffer.alloc(64),
+			offset: 0,
+		}
+		baNpdu.encode(
+			npduProbe,
+			NpduControlPriority.NORMAL_MESSAGE | NpduControlBit.EXPECTING_REPLY,
+			args.receiver,
+			null,
+			DEFAULT_HOP_COUNT,
+			NetworkLayerMessageType.WHO_IS_ROUTER_TO_NETWORK,
+			0,
+		)
+		const bvlcLength = args.receiver?.forwardedFrom
+			? BVLC_FWD_HEADER_LENGTH
+			: BVLC_HEADER_LENGTH
+		const transportApduSpace =
+			this._transport.getMaxPayload() - bvlcLength - npduProbe.offset
+		const segmentApduLimit = Math.min(remoteMax, transportApduSpace)
+		const segmentCapacity =
+			segmentApduLimit - SEGMENTED_CONFIRMED_REQUEST_HEADER_LENGTH
+		if (segmentCapacity < 1) {
+			throw new InvalidSegmentedRequestError({
+				option: 'remoteMaxApduLength',
+				value: remoteMax,
+				reason: 'leaves no room for segment payload octets',
+				service: args.service,
+				invokeId: args.invokeId,
+			})
+		}
+
+		const totalSegments = Math.max(
+			1,
+			Math.ceil(payload.offset / segmentCapacity),
+		)
+		if (
+			seg.remoteMaxSegmentsAccepted !== undefined &&
+			totalSegments > seg.remoteMaxSegmentsAccepted
+		) {
+			throw new SegmentCountExceededError({
+				requiredSegments: totalSegments,
+				maximumSegments: seg.remoteMaxSegmentsAccepted,
+				service: args.service,
+				invokeId: args.invokeId,
+			})
+		}
+
+		const payloadView = payload.buffer.subarray(0, payload.offset)
+		if (totalSegments === 1) {
+			// ASHRAE 135 - 20.1.2.4: the SEG bit marks a PDU that is one
+			// segment of a segmented message. A request that fits in a
+			// single segment is transmitted unsegmented, still honouring
+			// the validated remote APDU limit.
+			const buffer = this._getApduBuffer(args.receiver)
+			baNpdu.encode(
+				buffer,
+				NpduControlPriority.NORMAL_MESSAGE |
+					NpduControlBit.EXPECTING_REPLY,
+				args.receiver,
+				null,
+				DEFAULT_HOP_COUNT,
+				NetworkLayerMessageType.WHO_IS_ROUTER_TO_NETWORK,
+				0,
+			)
+			baApdu.encodeConfirmedServiceRequest(
+				buffer,
+				baseType,
+				args.service,
+				args.maxSegments,
+				args.maxApdu,
+				args.invokeId,
+				0,
+				0,
+			)
+			payloadView.copy(buffer.buffer, buffer.offset)
+			buffer.offset += payloadView.length
+			this.sendBvlc(args.receiver, buffer)
+			return this._awaitResponse(args.invokeId, args.maxSegments)
+		}
+
+		const key = this._getOutgoingSegmentKey(
+			args.receiver?.address,
+			args.invokeId,
+		)
+		const transactions = this._getOutgoingSegmentTransactions()
+		if (transactions.has(key)) {
+			throw new InvalidSegmentedRequestError({
+				option: 'invokeId',
+				value: args.invokeId,
+				reason: 'a segmented request with this invokeId to this receiver is already in progress',
+				service: args.service,
+				invokeId: args.invokeId,
+			})
+		}
+		if (this._isClosed) {
+			throw new Error('ERR_CLOSED')
+		}
+
+		let resolveTransfer!: () => void
+		let rejectTransfer!: (err: Error) => void
+		const transferPromise = new Promise<void>((resolve, reject) => {
+			resolveTransfer = resolve
+			rejectTransfer = reject
+		})
+
+		const state: OutgoingSegmentTransaction = {
+			key,
+			receiver: args.receiver,
+			service: args.service,
+			invokeId: args.invokeId,
+			maxSegments: args.maxSegments,
+			maxApdu: args.maxApdu,
+			baseType,
+			payload: payload.buffer.subarray(0, payload.offset),
+			segmentCapacity,
+			totalSegments,
+			proposedWindowSize,
+			// Only segment 0 may be sent until the first SegmentACK
+			// conveys the actual window size (ASHRAE 135 - 5.4.4.2).
+			actualWindowSize: 1,
+			initialSequenceAbs: 0,
+			retryCount: 0,
+			maxRetries,
+			segmentAckTimeout,
+			timer: null,
+			done: false,
+			responseRegistered: false,
+			responsePromise: null,
+			resolveTransfer,
+			rejectTransfer,
+			transferPromise,
+		}
+		transactions.set(key, state)
+
+		try {
+			this._sendSegmentWindow(state)
+			await state.transferPromise
+			return await state.responsePromise
+		} finally {
+			this._cleanupOutgoingSegmentTransaction(state)
+		}
+	}
+
+	private _sendSegment(state: OutgoingSegmentTransaction, index: number) {
+		const buffer = this._getApduBuffer(state.receiver)
+		baNpdu.encode(
+			buffer,
+			NpduControlPriority.NORMAL_MESSAGE | NpduControlBit.EXPECTING_REPLY,
+			state.receiver,
+			null,
+			DEFAULT_HOP_COUNT,
+			NetworkLayerMessageType.WHO_IS_ROUTER_TO_NETWORK,
+			0,
+		)
+		const moreFollows = index < state.totalSegments - 1
+		const type =
+			state.baseType |
+			PduConReqBit.SEGMENTED_MESSAGE |
+			(moreFollows ? PduConReqBit.MORE_FOLLOWS : 0)
+		baApdu.encodeConfirmedServiceRequest(
+			buffer,
+			type,
+			state.service,
+			state.maxSegments,
+			state.maxApdu,
+			state.invokeId,
+			index & 0xff,
+			state.proposedWindowSize,
+		)
+		const chunk = state.payload.subarray(
+			index * state.segmentCapacity,
+			Math.min((index + 1) * state.segmentCapacity, state.payload.length),
+		)
+		chunk.copy(buffer.buffer, buffer.offset)
+		buffer.offset += chunk.length
+		this.sendBvlc(state.receiver, buffer)
+	}
+
+	/**
+	 * (Re)transmits the current window starting at the first
+	 * unacknowledged segment and re-arms the SegmentACK timer.
+	 */
+	private _sendSegmentWindow(state: OutgoingSegmentTransaction) {
+		const first = state.initialSequenceAbs
+		const last = Math.min(
+			first + state.actualWindowSize - 1,
+			state.totalSegments - 1,
+		)
+		for (let index = first; index <= last; index++) {
+			this._sendSegment(state, index)
+		}
+		if (last === state.totalSegments - 1 && !state.responseRegistered) {
+			// The final segment is now on the wire: register the pending
+			// service response before its SegmentACK arrives so a fast
+			// (or reordered) response is not dropped.
+			state.responseRegistered = true
+			state.responsePromise = this._awaitResponse(
+				state.invokeId,
+				state.maxSegments,
+			)
+			// Guard against an unhandled rejection when the transfer
+			// phase fails first; the rejection is still observed by the
+			// awaiting caller if the transfer succeeds.
+			state.responsePromise.catch(() => {})
+		}
+		this._restartSegmentTimer(state)
+	}
+
+	private _restartSegmentTimer(state: OutgoingSegmentTransaction) {
+		if (state.timer) {
+			clearTimeout(state.timer)
+		}
+		state.timer = setTimeout(() => {
+			this._onSegmentAckTimeout(state)
+		}, state.segmentAckTimeout)
+		if (typeof state.timer.unref === 'function') {
+			state.timer.unref()
+		}
+	}
+
+	private _onSegmentAckTimeout(state: OutgoingSegmentTransaction) {
+		if (state.done) {
+			return
+		}
+		state.retryCount++
+		if (state.retryCount > state.maxRetries) {
+			// ASHRAE 135 - 5.4.4.2: abort the transaction after the retry
+			// budget is exhausted.
+			this.abortResponse(
+				state.receiver,
+				state.invokeId,
+				AbortReason.TSM_TIMEOUT,
+				false,
+			)
+			this._failOutgoingSegmentTransaction(
+				state,
+				new SegmentAckTimeoutError({
+					service: state.service,
+					invokeId: state.invokeId,
+					retries: state.maxRetries,
+				}),
+			)
+			return
+		}
+		trace(
+			`SegmentACK timeout for invokeId ${state.invokeId}, retry ${state.retryCount}/${state.maxRetries}`,
+		)
+		this._sendSegmentWindow(state)
+	}
+
+	private _completeOutgoingSegmentTransfer(
+		state: OutgoingSegmentTransaction,
+	) {
+		if (state.done) {
+			return
+		}
+		state.done = true
+		if (state.timer) {
+			clearTimeout(state.timer)
+			state.timer = null
+		}
+		this._getOutgoingSegmentTransactions().delete(state.key)
+		state.resolveTransfer()
+	}
+
+	private _failOutgoingSegmentTransaction(
+		state: OutgoingSegmentTransaction,
+		err: Error,
+	) {
+		if (state.done) {
+			return
+		}
+		state.done = true
+		if (state.timer) {
+			clearTimeout(state.timer)
+			state.timer = null
+		}
+		this._getOutgoingSegmentTransactions().delete(state.key)
+		if (state.responseRegistered) {
+			// Settle the pending response entry so it does not linger
+			// until its own timeout.
+			this._requestManager.resolve(state.invokeId, err)
+		}
+		state.rejectTransfer(err)
+	}
+
+	private _cleanupOutgoingSegmentTransaction(
+		state: OutgoingSegmentTransaction,
+	) {
+		state.done = true
+		if (state.timer) {
+			clearTimeout(state.timer)
+			state.timer = null
+		}
+		this._getOutgoingSegmentTransactions().delete(state.key)
+	}
+
+	private _findOutgoingSegmentTransaction(
+		header: BACnetMessageHeader | undefined,
+		invokeId: number,
+	): OutgoingSegmentTransaction | undefined {
+		if (!this._outgoingSegmentTransactions?.size) {
+			return undefined
+		}
+		const key = this._getOutgoingSegmentKey(
+			header?.sender?.address,
+			invokeId,
+		)
+		return this._outgoingSegmentTransactions.get(key)
+	}
+
+	/**
+	 * Called when a final service response (SimpleACK/ComplexACK) arrives
+	 * for an invokeId with an active outgoing segmented transaction. A
+	 * response implies the remote device received every segment, so the
+	 * transfer phase is completed even if the final SegmentACK was lost.
+	 */
+	private _completeSegmentTransferOnResponse(
+		header: BACnetMessageHeader | undefined,
+		invokeId: number,
+	) {
+		const state = this._findOutgoingSegmentTransaction(header, invokeId)
+		if (state && state.responseRegistered) {
+			this._completeOutgoingSegmentTransfer(state)
+		}
+	}
+
+	/**
+	 * Called when a terminal Error/Reject/Abort arrives for an invokeId
+	 * with an active outgoing segmented transaction, possibly before the
+	 * final segment was sent.
+	 */
+	private _failSegmentTransferOnTerminal(
+		header: BACnetMessageHeader | undefined,
+		invokeId: number,
+		err: Error,
+	) {
+		const state = this._findOutgoingSegmentTransaction(header, invokeId)
+		if (state) {
+			this._failOutgoingSegmentTransaction(state, err)
+		}
+	}
+
 	private async _awaitResponse(
 		invokeId: number,
 		maxSegments: number,
@@ -358,22 +959,25 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		buffer: Buffer,
 		offset: number,
 		length: number,
+		header?: BACnetMessageHeader,
 	) {
 		const result = ErrorService.decode(buffer, offset)
 		if (!result) return debug('Couldn`t decode Error')
-		this._requestManager.resolve(
-			invokeId,
-			new Error(
-				`BacnetError - Class:${result.class} - Code:${result.code}`,
-			),
+		const err = new Error(
+			`BacnetError - Class:${result.class} - Code:${result.code}`,
 		)
+		this._failSegmentTransferOnTerminal(header, invokeId, err)
+		this._requestManager.resolve(invokeId, err)
 	}
 
-	private _processAbort(invokeId: number, reason: number) {
-		this._requestManager.resolve(
-			invokeId,
-			new Error(`BacnetAbort - Reason:${reason}`),
-		)
+	private _processAbort(
+		invokeId: number,
+		reason: number,
+		header?: BACnetMessageHeader,
+	) {
+		const err = new Error(`BacnetAbort - Reason:${reason}`)
+		this._failSegmentTransferOnTerminal(header, invokeId, err)
+		this._requestManager.resolve(invokeId, err)
 	}
 
 	private _segmentAckResponse(
@@ -491,8 +1095,17 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		const state = segmentStates.get(key) ?? {
 			lastSequenceNumber: null,
 			segments: [],
+			segmentsSinceAck: 0,
+			timer: null,
 		}
 		segmentStates.set(key, state)
+
+		// We grant the sender's proposed window size, clamped to the
+		// valid BACnet range.
+		const actualWindowSize = Math.min(
+			Math.max(msg.proposedWindowNumber || 1, 1),
+			MAX_SEGMENT_WINDOW_SIZE,
+		)
 
 		const first =
 			msg.sequencenumber === 0 && state.lastSequenceNumber === null
@@ -500,23 +1113,32 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			const expectedSequence =
 				((state.lastSequenceNumber ?? 0) + 1) & 0xff
 			if (msg.sequencenumber !== expectedSequence) {
+				// Duplicate or out-of-order segment: negative ACK with the
+				// last segment received in order, keep the assembly alive.
+				this._touchSegmentAssemblyTimer(key, state)
 				return this._segmentAckResponse(
 					msg.header.sender,
 					true,
 					server,
 					msg.invokeId,
 					state.lastSequenceNumber ?? 0,
-					msg.proposedWindowNumber,
+					actualWindowSize,
 				)
 			}
 		}
 
 		state.lastSequenceNumber = msg.sequencenumber
+		state.segmentsSinceAck++
 		const moreFollows = !!(msg.type & PduConReqBit.MORE_FOLLOWS)
 
+		// ASHRAE 135 - 5.4.5.2: the first segment is acknowledged
+		// immediately to convey the actual window size; afterwards one ACK
+		// per full window and one for the final segment. Counting segments
+		// since the last ACK (instead of `sequence % window`) keeps the
+		// cadence correct across sequence-number wrap-around.
 		if (
-			(msg.proposedWindowNumber > 0 &&
-				(msg.sequencenumber + 1) % msg.proposedWindowNumber === 0) ||
+			first ||
+			state.segmentsSinceAck >= actualWindowSize ||
 			!moreFollows
 		) {
 			this._segmentAckResponse(
@@ -525,8 +1147,9 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 				server,
 				msg.invokeId,
 				msg.sequencenumber,
-				msg.proposedWindowNumber,
+				actualWindowSize,
 			)
+			state.segmentsSinceAck = 0
 		}
 
 		this._performDefaultSegmentHandling(
@@ -540,7 +1163,37 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		)
 
 		if (!moreFollows) {
+			if (state.timer) {
+				clearTimeout(state.timer)
+				state.timer = null
+			}
 			segmentStates.delete(key)
+		} else {
+			this._touchSegmentAssemblyTimer(key, state)
+		}
+	}
+
+	/**
+	 * (Re)arms the inactivity timer that discards an incomplete incoming
+	 * segment assembly.
+	 */
+	private _touchSegmentAssemblyTimer(
+		key: string,
+		state: SegmentAssemblyState,
+	) {
+		if (state.timer) {
+			clearTimeout(state.timer)
+		}
+		const timeout = this._settings?.apduTimeout ?? 3000
+		state.timer = setTimeout(() => {
+			state.timer = null
+			this._getSegmentAssemblyStates().delete(key)
+			trace(
+				`Discarded incomplete segment assembly ${key} after ${timeout}ms`,
+			)
+		}, timeout)
+		if (typeof state.timer.unref === 'function') {
+			state.timer.unref()
 		}
 	}
 
@@ -548,6 +1201,101 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		trace(
 			`Received SegmentACK for invokeId ${msg.originalInvokeId} seq ${msg.sequencenumber} window ${msg.actualWindowSize}`,
 		)
+		const state = this._findOutgoingSegmentTransaction(
+			msg.header,
+			msg.originalInvokeId,
+		)
+		if (!state || state.done) {
+			return trace(
+				`SegmentACK for unknown or completed transaction -> Drop`,
+			)
+		}
+		// Our outgoing segmented transfers are confirmed requests, so the
+		// acknowledging peer is the server and must set the server bit.
+		if (!(msg.type & PduSegAckBit.SERVER)) {
+			return trace(
+				`SegmentACK without server bit for outgoing request -> Drop`,
+			)
+		}
+		const negative = !!(msg.type & PduSegAckBit.NEGATIVE_ACK)
+
+		// ASHRAE 135 - 5.4.4.2: the acknowledged sequence number is the
+		// last segment the peer received in order; transmission resumes at
+		// the following sequence number. Window membership is evaluated in
+		// modulo-256 space to support sequence wrap-around.
+		const offsetInWindow =
+			(msg.sequencenumber - (state.initialSequenceAbs & 0xff)) & 0xff
+		const inWindow = offsetInWindow < state.actualWindowSize
+
+		if (!inWindow) {
+			// Duplicate ACK (e.g. a re-acknowledgement of the previous
+			// window). A duplicate negative ACK triggers an immediate
+			// bounded retransmission of the current window; a duplicate
+			// positive ACK only restarts the timer (ASHRAE 135 - 5.4.4.2).
+			if (negative) {
+				state.retryCount++
+				if (state.retryCount > state.maxRetries) {
+					this.abortResponse(
+						state.receiver,
+						state.invokeId,
+						AbortReason.TSM_TIMEOUT,
+						false,
+					)
+					return this._failOutgoingSegmentTransaction(
+						state,
+						new SegmentAckTimeoutError({
+							service: state.service,
+							invokeId: state.invokeId,
+							retries: state.maxRetries,
+						}),
+					)
+				}
+				return this._sendSegmentWindow(state)
+			}
+			return this._restartSegmentTimer(state)
+		}
+
+		// Apply the actual window size granted by the receiver.
+		if (
+			msg.actualWindowSize >= MIN_SEGMENT_WINDOW_SIZE &&
+			msg.actualWindowSize <= MAX_SEGMENT_WINDOW_SIZE
+		) {
+			state.actualWindowSize = msg.actualWindowSize
+		}
+
+		const ackedAbs = state.initialSequenceAbs + offsetInWindow
+		if (ackedAbs >= state.totalSegments - 1) {
+			// Final segment acknowledged: the segmented request phase is
+			// complete. The request itself is only resolved by the final
+			// service response, which is already registered.
+			return this._completeOutgoingSegmentTransfer(state)
+		}
+
+		state.initialSequenceAbs = ackedAbs + 1
+		if (negative) {
+			// The peer is missing segments after ackedAbs; retransmit
+			// from there, bounded to avoid infinite resend loops.
+			state.retryCount++
+			if (state.retryCount > state.maxRetries) {
+				this.abortResponse(
+					state.receiver,
+					state.invokeId,
+					AbortReason.TSM_TIMEOUT,
+					false,
+				)
+				return this._failOutgoingSegmentTransaction(
+					state,
+					new SegmentAckTimeoutError({
+						service: state.service,
+						invokeId: state.invokeId,
+						retries: state.maxRetries,
+					}),
+				)
+			}
+		} else {
+			state.retryCount = 0
+		}
+		this._sendSegmentWindow(state)
 	}
 
 	private _processServiceRequest(
@@ -681,6 +1429,10 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 					HasInvokeId
 				offset += msg.len
 				length -= msg.len
+				this._completeSegmentTransferOnResponse(
+					header,
+					(msg as HasInvokeId).invokeId,
+				)
 				this._requestManager.resolve(
 					(msg as HasInvokeId).invokeId,
 					null,
@@ -699,6 +1451,10 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 					offset,
 				) as ComplexAckMessage
 				msg.header = header
+				this._completeSegmentTransferOnResponse(
+					header,
+					(msg as HasInvokeId).invokeId,
+				)
 				const isSegmentedMessage =
 					(header.apduType & PduConReqBit.SEGMENTED_MESSAGE) !== 0
 				if (!isSegmentedMessage) {
@@ -765,6 +1521,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 					buffer,
 					offset + msg.len,
 					length - msg.len,
+					header,
 				)
 				break
 
@@ -772,7 +1529,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			case PduType.ABORT:
 				msg = baApdu.decodeAbort(buffer, offset) as Abort &
 					BACnetMessageBase
-				this._processAbort(msg.invokeId, msg.reason)
+				this._processAbort(msg.invokeId, msg.reason, header)
 				break
 
 			case PduType.CONFIRMED_REQUEST:
@@ -1221,46 +1978,23 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 					: ASN1_ARRAY_ALL,
 		}
 
-		const buffer = this._getApduBuffer(receiver)
-		baNpdu.encode(
-			buffer,
-			NpduControlPriority.NORMAL_MESSAGE | NpduControlBit.EXPECTING_REPLY,
+		const data = await this._sendConfirmedRequest({
 			receiver,
-			null,
-			DEFAULT_HOP_COUNT,
-			NetworkLayerMessageType.WHO_IS_ROUTER_TO_NETWORK,
-			0,
-		)
-
-		const type =
-			PduType.CONFIRMED_REQUEST |
-			(settings.maxSegments !== MaxSegmentsAccepted.SEGMENTS_0
-				? PduConReqBit.SEGMENTED_RESPONSE_ACCEPTED
-				: 0)
-		baApdu.encodeConfirmedServiceRequest(
-			buffer,
-			type,
-			ConfirmedServiceChoice.READ_PROPERTY,
-			settings.maxSegments,
-			settings.maxApdu,
-			settings.invokeId,
-			0,
-			0,
-		)
-
-		ReadProperty.encode(
-			buffer,
-			objectId.type,
-			objectId.instance,
-			propertyId,
-			settings.arrayIndex,
-		)
-		this.sendBvlc(receiver, buffer)
-
-		const data = await this._awaitResponse(
-			settings.invokeId,
-			settings.maxSegments,
-		)
+			service: ConfirmedServiceChoice.READ_PROPERTY,
+			maxSegments: settings.maxSegments,
+			maxApdu: settings.maxApdu,
+			invokeId: settings.invokeId,
+			acceptSegmentedResponse: true,
+			segmentedRequest: options.segmentedRequest,
+			encodePayload: (buffer) =>
+				ReadProperty.encode(
+					buffer,
+					objectId.type,
+					objectId.instance,
+					propertyId,
+					settings.arrayIndex,
+				),
+		})
 
 		const result = ReadProperty.decodeAcknowledge(
 			data.buffer,
@@ -1300,40 +2034,24 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 				(options as WritePropertyOptions).priority || ASN1_NO_PRIORITY,
 		}
 
-		const buffer = this._getApduBuffer(receiver)
-		baNpdu.encode(
-			buffer,
-			NpduControlPriority.NORMAL_MESSAGE | NpduControlBit.EXPECTING_REPLY,
+		await this._sendConfirmedRequest({
 			receiver,
-			null,
-			DEFAULT_HOP_COUNT,
-			NetworkLayerMessageType.WHO_IS_ROUTER_TO_NETWORK,
-			0,
-		)
-
-		baApdu.encodeConfirmedServiceRequest(
-			buffer,
-			PduType.CONFIRMED_REQUEST,
-			ConfirmedServiceChoice.WRITE_PROPERTY,
-			settings.maxSegments,
-			settings.maxApdu,
-			settings.invokeId,
-			0,
-			0,
-		)
-
-		WriteProperty.encode(
-			buffer,
-			objectId.type,
-			objectId.instance,
-			propertyId,
-			settings.arrayIndex,
-			settings.priority,
-			values,
-		)
-		this.sendBvlc(receiver, buffer)
-
-		await this._awaitResponse(settings.invokeId, settings.maxSegments)
+			service: ConfirmedServiceChoice.WRITE_PROPERTY,
+			maxSegments: settings.maxSegments,
+			maxApdu: settings.maxApdu,
+			invokeId: settings.invokeId,
+			segmentedRequest: options?.segmentedRequest,
+			encodePayload: (buffer) =>
+				WriteProperty.encode(
+					buffer,
+					objectId.type,
+					objectId.instance,
+					propertyId,
+					settings.arrayIndex,
+					settings.priority,
+					values,
+				),
+		})
 	}
 
 	/**
@@ -1354,37 +2072,17 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			invokeId:
 				(options as ServiceOptions).invokeId || this._getInvokeId(),
 		}
-		const buffer = this._getApduBuffer(receiver)
-		baNpdu.encode(
-			buffer,
-			NpduControlPriority.NORMAL_MESSAGE | NpduControlBit.EXPECTING_REPLY,
+		const data = await this._sendConfirmedRequest({
 			receiver,
-			null,
-			DEFAULT_HOP_COUNT,
-			NetworkLayerMessageType.WHO_IS_ROUTER_TO_NETWORK,
-			0,
-		)
-		const type =
-			PduType.CONFIRMED_REQUEST |
-			(settings.maxSegments !== MaxSegmentsAccepted.SEGMENTS_0
-				? PduConReqBit.SEGMENTED_RESPONSE_ACCEPTED
-				: 0)
-		baApdu.encodeConfirmedServiceRequest(
-			buffer,
-			type,
-			ConfirmedServiceChoice.READ_PROPERTY_MULTIPLE,
-			settings.maxSegments,
-			settings.maxApdu,
-			settings.invokeId,
-			0,
-			0,
-		)
-		ReadPropertyMultiple.encode(buffer, propertiesArray)
-		this.sendBvlc(receiver, buffer)
-		const data = await this._awaitResponse(
-			settings.invokeId,
-			settings.maxSegments,
-		)
+			service: ConfirmedServiceChoice.READ_PROPERTY_MULTIPLE,
+			maxSegments: settings.maxSegments,
+			maxApdu: settings.maxApdu,
+			invokeId: settings.invokeId,
+			acceptSegmentedResponse: true,
+			segmentedRequest: options.segmentedRequest,
+			encodePayload: (buffer) =>
+				ReadPropertyMultiple.encode(buffer, propertiesArray),
+		})
 		const result = ReadPropertyMultiple.decodeAcknowledge(
 			data.buffer,
 			data.offset,
@@ -1414,23 +2112,16 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			invokeId:
 				(options as ServiceOptions).invokeId || this._getInvokeId(),
 		}
-		const buffer = this._getApduBuffer(receiver)
-		baNpdu.encode(
-			buffer,
-			NpduControlPriority.NORMAL_MESSAGE | NpduControlBit.EXPECTING_REPLY,
+		await this._sendConfirmedRequest({
 			receiver,
-		)
-		baApdu.encodeConfirmedServiceRequest(
-			buffer,
-			PduType.CONFIRMED_REQUEST,
-			ConfirmedServiceChoice.WRITE_PROPERTY_MULTIPLE,
-			settings.maxSegments,
-			settings.maxApdu,
-			settings.invokeId,
-		)
-		WritePropertyMultiple.encodeObject(buffer, values)
-		this.sendBvlc(receiver, buffer)
-		await this._awaitResponse(settings.invokeId, settings.maxSegments)
+			service: ConfirmedServiceChoice.WRITE_PROPERTY_MULTIPLE,
+			maxSegments: settings.maxSegments,
+			maxApdu: settings.maxApdu,
+			invokeId: settings.invokeId,
+			segmentedRequest: options.segmentedRequest,
+			encodePayload: (buffer) =>
+				WritePropertyMultiple.encodeObject(buffer, values),
+		})
 	}
 
 	/**
@@ -1459,37 +2150,23 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			invokeId:
 				(options as ServiceOptions).invokeId || this._getInvokeId(),
 		}
-		const buffer = this._getApduBuffer()
-		baNpdu.encode(
-			buffer,
-			NpduControlPriority.NORMAL_MESSAGE | NpduControlBit.EXPECTING_REPLY,
+		await this._sendConfirmedRequest({
 			receiver,
-		)
-		baApdu.encodeConfirmedServiceRequest(
-			buffer,
-			PduType.CONFIRMED_REQUEST,
-			ConfirmedServiceChoice.CONFIRMED_COV_NOTIFICATION,
-			settings.maxSegments,
-			settings.maxApdu,
-			settings.invokeId,
-			0,
-			0,
-		)
-		CovNotify.encode(
-			buffer,
-			subscribeId,
-			initiatingDeviceId,
-			monitoredObject,
-			lifetime,
-			values,
-		)
-		baBvlc.encode(
-			buffer.buffer,
-			BvlcResultPurpose.ORIGINAL_UNICAST_NPDU,
-			buffer.offset,
-		)
-		this.sendBvlc(receiver, buffer)
-		await this._awaitResponse(settings.invokeId, settings.maxSegments)
+			service: ConfirmedServiceChoice.CONFIRMED_COV_NOTIFICATION,
+			maxSegments: settings.maxSegments,
+			maxApdu: settings.maxApdu,
+			invokeId: settings.invokeId,
+			segmentedRequest: options.segmentedRequest,
+			encodePayload: (buffer) =>
+				CovNotify.encode(
+					buffer,
+					subscribeId,
+					initiatingDeviceId,
+					monitoredObject,
+					lifetime,
+					values,
+				),
+		})
 	}
 
 	/**
@@ -1513,30 +2190,21 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 				this._getInvokeId(),
 			password: (options as DeviceCommunicationOptions).password,
 		}
-		const buffer = this._getApduBuffer(receiver)
-		baNpdu.encode(
-			buffer,
-			NpduControlPriority.NORMAL_MESSAGE | NpduControlBit.EXPECTING_REPLY,
+		await this._sendConfirmedRequest({
 			receiver,
-		)
-		baApdu.encodeConfirmedServiceRequest(
-			buffer,
-			PduType.CONFIRMED_REQUEST,
-			ConfirmedServiceChoice.DEVICE_COMMUNICATION_CONTROL,
-			settings.maxSegments,
-			settings.maxApdu,
-			settings.invokeId,
-			0,
-			0,
-		)
-		DeviceCommunicationControl.encode(
-			buffer,
-			timeDuration,
-			enableDisable,
-			settings.password,
-		)
-		this.sendBvlc(receiver, buffer)
-		await this._awaitResponse(settings.invokeId, settings.maxSegments)
+			service: ConfirmedServiceChoice.DEVICE_COMMUNICATION_CONTROL,
+			maxSegments: settings.maxSegments,
+			maxApdu: settings.maxApdu,
+			invokeId: settings.invokeId,
+			segmentedRequest: options.segmentedRequest,
+			encodePayload: (buffer) =>
+				DeviceCommunicationControl.encode(
+					buffer,
+					timeDuration,
+					enableDisable,
+					settings.password,
+				),
+		})
 	}
 
 	/**
@@ -1559,25 +2227,16 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 				this._getInvokeId(),
 			password: (options as ReinitializeDeviceOptions).password,
 		}
-		const buffer = this._getApduBuffer(receiver)
-		baNpdu.encode(
-			buffer,
-			NpduControlPriority.NORMAL_MESSAGE | NpduControlBit.EXPECTING_REPLY,
+		await this._sendConfirmedRequest({
 			receiver,
-		)
-		baApdu.encodeConfirmedServiceRequest(
-			buffer,
-			PduType.CONFIRMED_REQUEST,
-			ConfirmedServiceChoice.REINITIALIZE_DEVICE,
-			settings.maxSegments,
-			settings.maxApdu,
-			settings.invokeId,
-			0,
-			0,
-		)
-		ReinitializeDevice.encode(buffer, state, settings.password)
-		this.sendBvlc(receiver, buffer)
-		await this._awaitResponse(settings.invokeId, settings.maxSegments)
+			service: ConfirmedServiceChoice.REINITIALIZE_DEVICE,
+			maxSegments: settings.maxSegments,
+			maxApdu: settings.maxApdu,
+			invokeId: settings.invokeId,
+			segmentedRequest: options.segmentedRequest,
+			encodePayload: (buffer) =>
+				ReinitializeDevice.encode(buffer, state, settings.password),
+		})
 	}
 
 	/**
@@ -1603,29 +2262,23 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		// Default to stream mode (true) as it's the most common file access method
 		const isStream =
 			options.isStream !== undefined ? options.isStream : true
-		const buffer = this._getApduBuffer(receiver)
-		baNpdu.encode(
-			buffer,
-			NpduControlPriority.NORMAL_MESSAGE | NpduControlBit.EXPECTING_REPLY,
-			receiver,
-		)
-		baApdu.encodeConfirmedServiceRequest(
-			buffer,
-			PduType.CONFIRMED_REQUEST,
-			ConfirmedServiceChoice.ATOMIC_WRITE_FILE,
-			settings.maxSegments,
-			settings.maxApdu,
-			settings.invokeId,
-			0,
-			0,
-		)
 		const blocks: number[][] = fileBuffer
-		AtomicWriteFile.encode(buffer, isStream, objectId, position, blocks)
-		this.sendBvlc(receiver, buffer)
-		const data = await this._awaitResponse(
-			settings.invokeId,
-			settings.maxSegments,
-		)
+		const data = await this._sendConfirmedRequest({
+			receiver,
+			service: ConfirmedServiceChoice.ATOMIC_WRITE_FILE,
+			maxSegments: settings.maxSegments,
+			maxApdu: settings.maxApdu,
+			invokeId: settings.invokeId,
+			segmentedRequest: options.segmentedRequest,
+			encodePayload: (buffer) =>
+				AtomicWriteFile.encode(
+					buffer,
+					isStream,
+					objectId,
+					position,
+					blocks,
+				),
+		})
 		const result = AtomicWriteFile.decodeAcknowledge(
 			data.buffer,
 			data.offset,
@@ -1656,28 +2309,16 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			invokeId:
 				(options as ServiceOptions).invokeId || this._getInvokeId(),
 		}
-		const buffer = this._getApduBuffer(receiver)
-		baNpdu.encode(
-			buffer,
-			NpduControlPriority.NORMAL_MESSAGE | NpduControlBit.EXPECTING_REPLY,
+		const data = await this._sendConfirmedRequest({
 			receiver,
-		)
-		baApdu.encodeConfirmedServiceRequest(
-			buffer,
-			PduType.CONFIRMED_REQUEST,
-			ConfirmedServiceChoice.ATOMIC_READ_FILE,
-			settings.maxSegments,
-			settings.maxApdu,
-			settings.invokeId,
-			0,
-			0,
-		)
-		AtomicReadFile.encode(buffer, true, objectId, position, count)
-		this.sendBvlc(receiver, buffer)
-		const data = await this._awaitResponse(
-			settings.invokeId,
-			settings.maxSegments,
-		)
+			service: ConfirmedServiceChoice.ATOMIC_READ_FILE,
+			maxSegments: settings.maxSegments,
+			maxApdu: settings.maxApdu,
+			invokeId: settings.invokeId,
+			segmentedRequest: options.segmentedRequest,
+			encodePayload: (buffer) =>
+				AtomicReadFile.encode(buffer, true, objectId, position, count),
+		})
 		const result = AtomicReadFile.decodeAcknowledge(
 			data.buffer,
 			data.offset,
@@ -1708,37 +2349,25 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			invokeId:
 				(options as ServiceOptions).invokeId || this._getInvokeId(),
 		}
-		const buffer = this._getApduBuffer(receiver)
-		baNpdu.encode(
-			buffer,
-			NpduControlPriority.NORMAL_MESSAGE | NpduControlBit.EXPECTING_REPLY,
+		const data = await this._sendConfirmedRequest({
 			receiver,
-		)
-		baApdu.encodeConfirmedServiceRequest(
-			buffer,
-			PduType.CONFIRMED_REQUEST,
-			ConfirmedServiceChoice.READ_RANGE,
-			settings.maxSegments,
-			settings.maxApdu,
-			settings.invokeId,
-			0,
-			0,
-		)
-		ReadRange.encode(
-			buffer,
-			objectId,
-			PropertyIdentifier.LOG_BUFFER,
-			ASN1_ARRAY_ALL,
-			ReadRangeType.BY_POSITION,
-			idxBegin,
-			new Date(),
-			quantity,
-		)
-		this.sendBvlc(receiver, buffer)
-		const data = await this._awaitResponse(
-			settings.invokeId,
-			settings.maxSegments,
-		)
+			service: ConfirmedServiceChoice.READ_RANGE,
+			maxSegments: settings.maxSegments,
+			maxApdu: settings.maxApdu,
+			invokeId: settings.invokeId,
+			segmentedRequest: options.segmentedRequest,
+			encodePayload: (buffer) =>
+				ReadRange.encode(
+					buffer,
+					objectId,
+					PropertyIdentifier.LOG_BUFFER,
+					ASN1_ARRAY_ALL,
+					ReadRangeType.BY_POSITION,
+					idxBegin,
+					new Date(),
+					quantity,
+				),
+		})
 		const result = ReadRange.decodeAcknowledge(
 			data.buffer,
 			data.offset,
@@ -1767,32 +2396,23 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			maxApdu: options.maxApdu || MaxApduLengthAccepted.OCTETS_1476,
 			invokeId: options.invokeId || this._getInvokeId(),
 		}
-		const buffer = this._getApduBuffer(receiver)
-		baNpdu.encode(
-			buffer,
-			NpduControlPriority.NORMAL_MESSAGE | NpduControlBit.EXPECTING_REPLY,
+		await this._sendConfirmedRequest({
 			receiver,
-		)
-		baApdu.encodeConfirmedServiceRequest(
-			buffer,
-			PduType.CONFIRMED_REQUEST,
-			ConfirmedServiceChoice.SUBSCRIBE_COV,
-			settings.maxSegments,
-			settings.maxApdu,
-			settings.invokeId,
-			0,
-			0,
-		)
-		SubscribeCov.encode(
-			buffer,
-			subscribeId,
-			objectId,
-			cancel,
-			issueConfirmedNotifications,
-			lifetime,
-		)
-		this.sendBvlc(receiver, buffer)
-		await this._awaitResponse(settings.invokeId, settings.maxSegments)
+			service: ConfirmedServiceChoice.SUBSCRIBE_COV,
+			maxSegments: settings.maxSegments,
+			maxApdu: settings.maxApdu,
+			invokeId: settings.invokeId,
+			segmentedRequest: options.segmentedRequest,
+			encodePayload: (buffer) =>
+				SubscribeCov.encode(
+					buffer,
+					subscribeId,
+					objectId,
+					cancel,
+					issueConfirmedNotifications,
+					lifetime,
+				),
+		})
 	}
 
 	/**
@@ -1812,35 +2432,26 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			maxApdu: options.maxApdu || MaxApduLengthAccepted.OCTETS_1476,
 			invokeId: options.invokeId || this._getInvokeId(),
 		}
-		const buffer = this._getApduBuffer(receiver)
-		baNpdu.encode(
-			buffer,
-			NpduControlPriority.NORMAL_MESSAGE | NpduControlBit.EXPECTING_REPLY,
+		await this._sendConfirmedRequest({
 			receiver,
-		)
-		baApdu.encodeConfirmedServiceRequest(
-			buffer,
-			PduType.CONFIRMED_REQUEST,
-			ConfirmedServiceChoice.SUBSCRIBE_COV_PROPERTY,
-			settings.maxSegments,
-			settings.maxApdu,
-			settings.invokeId,
-			0,
-			0,
-		)
-		SubscribeProperty.encode(
-			buffer,
-			subscribeId,
-			objectId,
-			cancel,
-			issueConfirmedNotifications,
-			0,
-			monitoredProperty,
-			false,
-			0x0f,
-		)
-		this.sendBvlc(receiver, buffer)
-		await this._awaitResponse(settings.invokeId, settings.maxSegments)
+			service: ConfirmedServiceChoice.SUBSCRIBE_COV_PROPERTY,
+			maxSegments: settings.maxSegments,
+			maxApdu: settings.maxApdu,
+			invokeId: settings.invokeId,
+			segmentedRequest: options.segmentedRequest,
+			encodePayload: (buffer) =>
+				SubscribeProperty.encode(
+					buffer,
+					subscribeId,
+					objectId,
+					cancel,
+					issueConfirmedNotifications,
+					0,
+					monitoredProperty,
+					false,
+					0x0f,
+				),
+		})
 	}
 
 	/**
@@ -1903,25 +2514,16 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			maxApdu: options.maxApdu || MaxApduLengthAccepted.OCTETS_1476,
 			invokeId: options.invokeId || this._getInvokeId(),
 		}
-		const buffer = this._getApduBuffer(receiver)
-		baNpdu.encode(
-			buffer,
-			NpduControlPriority.NORMAL_MESSAGE | NpduControlBit.EXPECTING_REPLY,
+		await this._sendConfirmedRequest({
 			receiver,
-		)
-		baApdu.encodeConfirmedServiceRequest(
-			buffer,
-			PduType.CONFIRMED_REQUEST,
-			ConfirmedServiceChoice.CREATE_OBJECT,
-			settings.maxSegments,
-			settings.maxApdu,
-			settings.invokeId,
-			0,
-			0,
-		)
-		CreateObject.encode(buffer, objectId, values)
-		this.sendBvlc(receiver, buffer)
-		await this._awaitResponse(settings.invokeId, settings.maxSegments)
+			service: ConfirmedServiceChoice.CREATE_OBJECT,
+			maxSegments: settings.maxSegments,
+			maxApdu: settings.maxApdu,
+			invokeId: settings.invokeId,
+			segmentedRequest: options.segmentedRequest,
+			encodePayload: (buffer) =>
+				CreateObject.encode(buffer, objectId, values),
+		})
 	}
 
 	/**
@@ -1937,25 +2539,15 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			maxApdu: options.maxApdu || MaxApduLengthAccepted.OCTETS_1476,
 			invokeId: options.invokeId || this._getInvokeId(),
 		}
-		const buffer = this._getApduBuffer(receiver)
-		baNpdu.encode(
-			buffer,
-			NpduControlPriority.NORMAL_MESSAGE | NpduControlBit.EXPECTING_REPLY,
+		await this._sendConfirmedRequest({
 			receiver,
-		)
-		baApdu.encodeConfirmedServiceRequest(
-			buffer,
-			PduType.CONFIRMED_REQUEST,
-			ConfirmedServiceChoice.DELETE_OBJECT,
-			settings.maxSegments,
-			settings.maxApdu,
-			settings.invokeId,
-			0,
-			0,
-		)
-		DeleteObject.encode(buffer, objectId)
-		this.sendBvlc(receiver, buffer)
-		await this._awaitResponse(settings.invokeId, settings.maxSegments)
+			service: ConfirmedServiceChoice.DELETE_OBJECT,
+			maxSegments: settings.maxSegments,
+			maxApdu: settings.maxApdu,
+			invokeId: settings.invokeId,
+			segmentedRequest: options.segmentedRequest,
+			encodePayload: (buffer) => DeleteObject.encode(buffer, objectId),
+		})
 	}
 
 	/**
@@ -1976,31 +2568,22 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			maxApdu: options.maxApdu || MaxApduLengthAccepted.OCTETS_1476,
 			invokeId: options.invokeId || this._getInvokeId(),
 		}
-		const buffer = this._getApduBuffer(receiver)
-		baNpdu.encode(
-			buffer,
-			NpduControlPriority.NORMAL_MESSAGE | NpduControlBit.EXPECTING_REPLY,
+		await this._sendConfirmedRequest({
 			receiver,
-		)
-		baApdu.encodeConfirmedServiceRequest(
-			buffer,
-			PduType.CONFIRMED_REQUEST,
-			ConfirmedServiceChoice.REMOVE_LIST_ELEMENT,
-			settings.maxSegments,
-			settings.maxApdu,
-			settings.invokeId,
-			0,
-			0,
-		)
-		AddListElement.encode(
-			buffer,
-			objectId,
-			reference.id,
-			reference.index,
-			values,
-		)
-		this.sendBvlc(receiver, buffer)
-		await this._awaitResponse(settings.invokeId, settings.maxSegments)
+			service: ConfirmedServiceChoice.REMOVE_LIST_ELEMENT,
+			maxSegments: settings.maxSegments,
+			maxApdu: settings.maxApdu,
+			invokeId: settings.invokeId,
+			segmentedRequest: options.segmentedRequest,
+			encodePayload: (buffer) =>
+				AddListElement.encode(
+					buffer,
+					objectId,
+					reference.id,
+					reference.index,
+					values,
+				),
+		})
 	}
 
 	/**
@@ -2021,31 +2604,22 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			maxApdu: options.maxApdu || MaxApduLengthAccepted.OCTETS_1476,
 			invokeId: options.invokeId || this._getInvokeId(),
 		}
-		const buffer = this._getApduBuffer(receiver)
-		baNpdu.encode(
-			buffer,
-			NpduControlPriority.NORMAL_MESSAGE | NpduControlBit.EXPECTING_REPLY,
+		await this._sendConfirmedRequest({
 			receiver,
-		)
-		baApdu.encodeConfirmedServiceRequest(
-			buffer,
-			PduType.CONFIRMED_REQUEST,
-			ConfirmedServiceChoice.ADD_LIST_ELEMENT,
-			settings.maxSegments,
-			settings.maxApdu,
-			settings.invokeId,
-			0,
-			0,
-		)
-		AddListElement.encode(
-			buffer,
-			objectId,
-			reference.id,
-			reference.index,
-			values,
-		)
-		this.sendBvlc(receiver, buffer)
-		await this._awaitResponse(settings.invokeId, settings.maxSegments)
+			service: ConfirmedServiceChoice.ADD_LIST_ELEMENT,
+			maxSegments: settings.maxSegments,
+			maxApdu: settings.maxApdu,
+			invokeId: settings.invokeId,
+			segmentedRequest: options.segmentedRequest,
+			encodePayload: (buffer) =>
+				AddListElement.encode(
+					buffer,
+					objectId,
+					reference.id,
+					reference.index,
+					values,
+				),
+		})
 	}
 
 	/**
@@ -2065,27 +2639,15 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			invokeId:
 				(options as ServiceOptions).invokeId || this._getInvokeId(),
 		}
-		const buffer = this._getApduBuffer(receiver)
-		baNpdu.encode(
-			buffer,
-			NpduControlPriority.NORMAL_MESSAGE | NpduControlBit.EXPECTING_REPLY,
+		const data = await this._sendConfirmedRequest({
 			receiver,
-		)
-		baApdu.encodeConfirmedServiceRequest(
-			buffer,
-			PduType.CONFIRMED_REQUEST,
-			ConfirmedServiceChoice.GET_ALARM_SUMMARY,
-			settings.maxSegments,
-			settings.maxApdu,
-			settings.invokeId,
-			0,
-			0,
-		)
-		this.sendBvlc(receiver, buffer)
-		const data = await this._awaitResponse(
-			settings.invokeId,
-			settings.maxSegments,
-		)
+			service: ConfirmedServiceChoice.GET_ALARM_SUMMARY,
+			maxSegments: settings.maxSegments,
+			maxApdu: settings.maxApdu,
+			invokeId: settings.invokeId,
+			segmentedRequest: options.segmentedRequest,
+			encodePayload: () => {},
+		})
 		const result = AlarmSummary.decode(
 			data.buffer,
 			data.offset,
@@ -2115,35 +2677,24 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			invokeId:
 				(options as ServiceOptions).invokeId || this._getInvokeId(),
 		}
-		const buffer = this._getApduBuffer(receiver)
-		baNpdu.encode(
-			buffer,
-			NpduControlPriority.NORMAL_MESSAGE | NpduControlBit.EXPECTING_REPLY,
+		const data = await this._sendConfirmedRequest({
 			receiver,
-		)
-		baApdu.encodeConfirmedServiceRequest(
-			buffer,
-			PduType.CONFIRMED_REQUEST,
-			ConfirmedServiceChoice.GET_EVENT_INFORMATION,
-			settings.maxSegments,
-			settings.maxApdu,
-			settings.invokeId,
-			0,
-			0,
-		)
-		if (objectId) {
-			baAsn1.encodeContextObjectId(
-				buffer,
-				0,
-				objectId.type,
-				objectId.instance,
-			)
-		}
-		this.sendBvlc(receiver, buffer)
-		const data = await this._awaitResponse(
-			settings.invokeId,
-			settings.maxSegments,
-		)
+			service: ConfirmedServiceChoice.GET_EVENT_INFORMATION,
+			maxSegments: settings.maxSegments,
+			maxApdu: settings.maxApdu,
+			invokeId: settings.invokeId,
+			segmentedRequest: options.segmentedRequest,
+			encodePayload: (buffer) => {
+				if (objectId) {
+					baAsn1.encodeContextObjectId(
+						buffer,
+						0,
+						objectId.type,
+						objectId.instance,
+					)
+				}
+			},
+		})
 		const result = GetEventInformation.decodeAcknowledge(
 			data.buffer,
 			data.offset,
@@ -2177,33 +2728,24 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			invokeId:
 				(options as ServiceOptions).invokeId || this._getInvokeId(),
 		}
-		const buffer = this._getApduBuffer(receiver)
-		baNpdu.encode(
-			buffer,
-			NpduControlPriority.NORMAL_MESSAGE | NpduControlBit.EXPECTING_REPLY,
+		await this._sendConfirmedRequest({
 			receiver,
-		)
-		baApdu.encodeConfirmedServiceRequest(
-			buffer,
-			PduType.CONFIRMED_REQUEST,
-			ConfirmedServiceChoice.ACKNOWLEDGE_ALARM,
-			settings.maxSegments,
-			settings.maxApdu,
-			settings.invokeId,
-			0,
-			0,
-		)
-		AlarmAcknowledge.encode(
-			buffer,
-			57,
-			objectId,
-			eventState,
-			ackText,
-			evTimeStamp,
-			ackTimeStamp,
-		)
-		this.sendBvlc(receiver, buffer)
-		await this._awaitResponse(settings.invokeId, settings.maxSegments)
+			service: ConfirmedServiceChoice.ACKNOWLEDGE_ALARM,
+			maxSegments: settings.maxSegments,
+			maxApdu: settings.maxApdu,
+			invokeId: settings.invokeId,
+			segmentedRequest: options.segmentedRequest,
+			encodePayload: (buffer) =>
+				AlarmAcknowledge.encode(
+					buffer,
+					57,
+					objectId,
+					eventState,
+					ackText,
+					evTimeStamp,
+					ackTimeStamp,
+				),
+		})
 	}
 
 	/**
@@ -2226,25 +2768,16 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			invokeId:
 				(options as ServiceOptions).invokeId || this._getInvokeId(),
 		}
-		const buffer = this._getApduBuffer(receiver)
-		baNpdu.encode(
-			buffer,
-			NpduControlPriority.NORMAL_MESSAGE | NpduControlBit.EXPECTING_REPLY,
+		await this._sendConfirmedRequest({
 			receiver,
-		)
-		baApdu.encodeConfirmedServiceRequest(
-			buffer,
-			PduType.CONFIRMED_REQUEST,
-			ConfirmedServiceChoice.CONFIRMED_PRIVATE_TRANSFER,
-			settings.maxSegments,
-			settings.maxApdu,
-			settings.invokeId,
-			0,
-			0,
-		)
-		PrivateTransfer.encode(buffer, vendorId, serviceNumber, data)
-		this.sendBvlc(receiver, buffer)
-		await this._awaitResponse(settings.invokeId, settings.maxSegments)
+			service: ConfirmedServiceChoice.CONFIRMED_PRIVATE_TRANSFER,
+			maxSegments: settings.maxSegments,
+			maxApdu: settings.maxApdu,
+			invokeId: settings.invokeId,
+			segmentedRequest: options.segmentedRequest,
+			encodePayload: (buffer) =>
+				PrivateTransfer.encode(buffer, vendorId, serviceNumber, data),
+		})
 	}
 
 	/**
@@ -2280,36 +2813,24 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			maxApdu: options.maxApdu || MaxApduLengthAccepted.OCTETS_1476,
 			invokeId: options.invokeId || this._getInvokeId(),
 		}
-		const buffer = this._getApduBuffer(receiver)
-		baNpdu.encode(
-			buffer,
-			NpduControlPriority.NORMAL_MESSAGE | NpduControlBit.EXPECTING_REPLY,
+		const data = await this._sendConfirmedRequest({
 			receiver,
-		)
-		baApdu.encodeConfirmedServiceRequest(
-			buffer,
-			PduType.CONFIRMED_REQUEST,
-			ConfirmedServiceChoice.GET_ENROLLMENT_SUMMARY,
-			settings.maxSegments,
-			settings.maxApdu,
-			settings.invokeId,
-			0,
-			0,
-		)
-		GetEnrollmentSummary.encode(
-			buffer,
-			acknowledgmentFilter,
-			options.enrollmentFilter,
-			options.eventStateFilter,
-			options.eventTypeFilter,
-			options.priorityFilter,
-			options.notificationClassFilter,
-		)
-		this.sendBvlc(receiver, buffer)
-		const data = await this._awaitResponse(
-			settings.invokeId,
-			settings.maxSegments,
-		)
+			service: ConfirmedServiceChoice.GET_ENROLLMENT_SUMMARY,
+			maxSegments: settings.maxSegments,
+			maxApdu: settings.maxApdu,
+			invokeId: settings.invokeId,
+			segmentedRequest: options.segmentedRequest,
+			encodePayload: (buffer) =>
+				GetEnrollmentSummary.encode(
+					buffer,
+					acknowledgmentFilter,
+					options.enrollmentFilter,
+					options.eventStateFilter,
+					options.eventTypeFilter,
+					options.priorityFilter,
+					options.notificationClassFilter,
+				),
+		})
 		const result = GetEnrollmentSummary.decodeAcknowledge(
 			data.buffer,
 			data.offset,
@@ -2357,25 +2878,16 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			invokeId:
 				(options as ServiceOptions).invokeId || this._getInvokeId(),
 		}
-		const buffer = this._getApduBuffer(receiver)
-		baNpdu.encode(
-			buffer,
-			NpduControlPriority.NORMAL_MESSAGE | NpduControlBit.EXPECTING_REPLY,
+		await this._sendConfirmedRequest({
 			receiver,
-		)
-		baApdu.encodeConfirmedServiceRequest(
-			buffer,
-			PduType.CONFIRMED_REQUEST,
-			ConfirmedServiceChoice.CONFIRMED_EVENT_NOTIFICATION,
-			settings.maxSegments,
-			settings.maxApdu,
-			settings.invokeId,
-			0,
-			0,
-		)
-		EventNotifyData.encode(buffer, eventNotification)
-		this.sendBvlc(receiver, buffer)
-		await this._awaitResponse(settings.invokeId, settings.maxSegments)
+			service: ConfirmedServiceChoice.CONFIRMED_EVENT_NOTIFICATION,
+			maxSegments: settings.maxSegments,
+			maxApdu: settings.maxApdu,
+			invokeId: settings.invokeId,
+			segmentedRequest: options.segmentedRequest,
+			encodePayload: (buffer) =>
+				EventNotifyData.encode(buffer, eventNotification),
+		})
 	}
 
 	/**
@@ -2601,6 +3113,15 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 	 */
 	close(): void {
 		this._isClosed = true
+		if (this._outgoingSegmentTransactions?.size) {
+			const err = new Error('ERR_CLOSED')
+			for (const state of Array.from(
+				this._outgoingSegmentTransactions.values(),
+			)) {
+				this._failOutgoingSegmentTransaction(state, err)
+			}
+			this._outgoingSegmentTransactions.clear()
+		}
 		this._requestManager.clear(true)
 		if (this._pendingForeignDeviceRegistrations?.size) {
 			const err = new Error('ERR_CLOSED')
@@ -2609,7 +3130,15 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			}
 			this._pendingForeignDeviceRegistrations.clear()
 		}
-		this._segmentAssemblyStates?.clear()
+		if (this._segmentAssemblyStates?.size) {
+			for (const state of this._segmentAssemblyStates.values()) {
+				if (state.timer) {
+					clearTimeout(state.timer)
+					state.timer = null
+				}
+			}
+			this._segmentAssemblyStates.clear()
+		}
 		this._transport.close()
 	}
 

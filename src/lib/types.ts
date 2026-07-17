@@ -529,10 +529,58 @@ export interface WhoIsOptions {
 	highLimit?: number
 }
 
+/**
+ * Caller-controlled transport options for sending a confirmed request as a
+ * segmented transfer. The library never chooses segmentation on its own:
+ * segmenting a request requires the caller to set `enabled: true` and to
+ * supply the remote device's maximum APDU length.
+ */
+export interface SegmentedRequestOptions {
+	/** Explicit caller intent to send this request segmented. */
+	enabled: boolean
+	/**
+	 * Maximum APDU length (in octets) the remote device accepts for
+	 * incoming requests, e.g. from the device's I-Am / max-apdu-length-accepted.
+	 * Each transmitted segment APDU will not exceed this value. This is
+	 * distinct from `ServiceOptions.maxApdu`, which advertises the local
+	 * maximum APDU length accepted for responses.
+	 *
+	 * When `enabled` is false, this value (if provided) is still used to
+	 * validate the unsegmented request size before sending; an oversized
+	 * request throws `ApduTooLargeError` instead of being sent.
+	 */
+	remoteMaxApduLength: number
+	/**
+	 * Maximum number of segments the remote device accepts per request
+	 * (from max-segments-accepted, as a plain count). When provided, a
+	 * request requiring more segments throws `SegmentCountExceededError`
+	 * locally before anything is sent.
+	 */
+	remoteMaxSegmentsAccepted?: number
+	/**
+	 * Proposed window size (1..127) encoded in every segment. The remote
+	 * device may reply with a smaller/larger actual window size which the
+	 * library then applies. Defaults to 1.
+	 */
+	proposedWindowSize?: number
+	/** Maximum retransmissions of a segment window. Defaults to 3. */
+	maxRetries?: number
+	/**
+	 * Milliseconds to wait for a SegmentACK before retransmitting the
+	 * current window. Defaults to the client's `apduTimeout`.
+	 */
+	segmentAckTimeout?: number
+}
+
 export interface ServiceOptions {
 	maxSegments?: number
 	maxApdu?: number
 	invokeId?: number
+	/**
+	 * Explicit caller-selected segmented transport for this request.
+	 * Absent or `enabled: false` means the request is sent unsegmented.
+	 */
+	segmentedRequest?: SegmentedRequestOptions
 }
 
 export interface ReadPropertyOptions extends ServiceOptions {
