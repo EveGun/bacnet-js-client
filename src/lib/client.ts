@@ -95,6 +95,7 @@ import {
 	EventNotifyDataParams,
 	NetworkOpResult,
 	SegmentedRequestOptions,
+	AcknowledgeAlarmOptions,
 } from './types'
 import {
 	ApduTooLargeError,
@@ -2700,6 +2701,9 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 
 	/**
 	 * Gets event information from a device.
+	 *
+	 * This method follows paged `GetEventInformation` responses automatically
+	 * while `moreEvents` is set by the remote device.
 	 */
 	async getEventInformation(
 		receiver: BACNetAddress,
@@ -2713,40 +2717,62 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			maxApdu:
 				(options as ServiceOptions).maxApdu ||
 				MaxApduLengthAccepted.OCTETS_1476,
-			invokeId:
-				(options as ServiceOptions).invokeId || this._getInvokeId(),
 		}
-		const data = await this._sendConfirmedRequest({
-			receiver,
-			service: ConfirmedServiceChoice.GET_EVENT_INFORMATION,
-			maxSegments: settings.maxSegments,
-			maxApdu: settings.maxApdu,
-			invokeId: settings.invokeId,
-			segmentedRequest: options.segmentedRequest,
-			encodePayload: (buffer) => {
-				if (objectId) {
-					baAsn1.encodeContextObjectId(
-						buffer,
-						0,
-						objectId.type,
-						objectId.instance,
-					)
-				}
-			},
-		})
-		const result = GetEventInformation.decodeAcknowledge(
-			data.buffer,
-			data.offset,
-			data.length,
-		)
-		if (!result) {
-			throw new Error('INVALID_DECODING')
+		const events: BACNetEventInformation[] = []
+		let lastReceivedObjectId = objectId ?? null
+		const maxPages = 1024
+
+		for (let page = 0; page < maxPages; page++) {
+			const invokeId =
+				page === 0 && options.invokeId != null
+					? options.invokeId
+					: this._getInvokeId()
+			const currentObjectId = lastReceivedObjectId
+			const data = await this._sendConfirmedRequest({
+				receiver,
+				service: ConfirmedServiceChoice.GET_EVENT_INFORMATION,
+				maxSegments: settings.maxSegments,
+				maxApdu: settings.maxApdu,
+				invokeId,
+				segmentedRequest: options.segmentedRequest,
+				encodePayload: (buffer) => {
+					if (currentObjectId) {
+						baAsn1.encodeContextObjectId(
+							buffer,
+							0,
+							currentObjectId.type,
+							currentObjectId.instance,
+						)
+					}
+				},
+			})
+			const result = GetEventInformation.decodeAcknowledge(
+				data.buffer,
+				data.offset,
+				data.length,
+			)
+			if (!result) {
+				throw new Error('INVALID_DECODING')
+			}
+			events.push(...result.events)
+			if (!result.moreEvents) {
+				return events
+			}
+			const lastEvent = result.events[result.events.length - 1]
+			if (!lastEvent?.objectId) {
+				throw new Error('INVALID_DECODING')
+			}
+			lastReceivedObjectId = lastEvent.objectId
 		}
-		return result.events
+
+		throw new Error('TOO_MANY_EVENT_PAGES')
 	}
 
 	/**
 	 * Acknowledges an alarm.
+	 *
+	 * `options.acknowledgingProcessId` is mandatory and the call will throw
+	 * `ACKNOWLEDGING_PROCESS_ID_REQUIRED` when it is omitted.
 	 */
 	async acknowledgeAlarm(
 		receiver: BACNetAddress,
@@ -2755,8 +2781,12 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		ackText: string,
 		evTimeStamp: BACNetTimestamp,
 		ackTimeStamp: BACNetTimestamp,
-		options: ServiceOptions = {},
+		options: AcknowledgeAlarmOptions,
 	): Promise<void> {
+		if (!options || options.acknowledgingProcessId == null) {
+			throw new Error('ACKNOWLEDGING_PROCESS_ID_REQUIRED')
+		}
+
 		const settings: ServiceOptions = {
 			maxSegments:
 				(options as ServiceOptions).maxSegments ??
@@ -2777,7 +2807,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			encodePayload: (buffer) =>
 				AlarmAcknowledge.encode(
 					buffer,
-					57,
+					options.acknowledgingProcessId,
 					objectId,
 					eventState,
 					ackText,
