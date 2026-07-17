@@ -82,6 +82,7 @@ import {
 	ComplexAck,
 	ComplexAckMessage,
 	HasInvokeId,
+	SegmentAckMessage,
 	PropertyReference,
 	TypedValue,
 	BacnetService,
@@ -110,6 +111,7 @@ import {
 	NpduControlBit,
 	MaxSegmentsAccepted,
 	MaxApduLengthAccepted,
+	AbortReason,
 	ASN1_ARRAY_ALL,
 	ASN1_NO_PRIORITY,
 	PropertyIdentifier,
@@ -119,7 +121,6 @@ import {
 import { RequestManager } from './request-manager'
 
 import { Buffer } from 'buffer'
-import { buffer } from 'stream/consumers'
 const debug = debugLib('bacnet:client:debug')
 const trace = debugLib('bacnet:client:trace')
 
@@ -129,6 +130,11 @@ const BROADCAST_ADDRESS = '255.255.255.255'
 const DEFAULT_HOP_COUNT = 0xff
 const BVLC_HEADER_LENGTH = 4
 const BVLC_FWD_HEADER_LENGTH = 10 // FORWARDED_NPDU
+
+interface SegmentAssemblyState {
+	lastSequenceNumber: number | null
+	segments: Buffer[]
+}
 
 const beU = UnconfirmedServiceChoice
 const unconfirmedServiceMap: BACnetEventsMap = {
@@ -200,9 +206,9 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 
 	private _requestManager: RequestManager
 
-	private _lastSequenceNumber = 0
+	private _pendingRequestMaxSegments?: Map<number, number>
 
-	private _segmentStore: Buffer[] = []
+	private _segmentAssemblyStates?: Map<string, SegmentAssemblyState>
 
 	private _isClosed = false
 
@@ -217,6 +223,8 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			transport: options.transport,
 			broadcastAddress: options.broadcastAddress || BROADCAST_ADDRESS, // Usa la costante
 			apduTimeout: options.apduTimeout || 3000,
+			abortOnSegmentedResponseWhenNoSegAccepted:
+				options.abortOnSegmentedResponseWhenNoSegAccepted || false,
 		}
 
 		this._requestManager = new RequestManager(this._settings.apduTimeout)
@@ -310,6 +318,41 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		return this._pendingForeignDeviceRegistrations
 	}
 
+	private _getPendingRequestMaxSegments() {
+		if (!this._pendingRequestMaxSegments) {
+			this._pendingRequestMaxSegments = new Map()
+		}
+		return this._pendingRequestMaxSegments
+	}
+
+	private _getSegmentAssemblyStates() {
+		if (!this._segmentAssemblyStates) {
+			this._segmentAssemblyStates = new Map()
+		}
+		return this._segmentAssemblyStates
+	}
+
+	private _getSegmentAssemblyKey(
+		msg: SegmentableMessage,
+		server: boolean,
+	): string {
+		const sender =
+			this._normalizeAddress(msg.header?.sender?.address) ?? 'unknown'
+		return `${server ? 'srv' : 'cli'}|${sender}|${msg.invokeId}`
+	}
+
+	private async _awaitResponse(
+		invokeId: number,
+		maxSegments: number,
+	): Promise<any> {
+		this._getPendingRequestMaxSegments().set(invokeId, maxSegments)
+		try {
+			return await this._requestManager.add(invokeId)
+		} finally {
+			this._getPendingRequestMaxSegments().delete(invokeId)
+		}
+	}
+
 	private _processError(
 		invokeId: number,
 		buffer: Buffer,
@@ -370,6 +413,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 
 	private _performDefaultSegmentHandling(
 		msg: BACnetMessage,
+		assemblyState: SegmentAssemblyState,
 		first: boolean,
 		moreFollows: boolean,
 		buffer: Buffer,
@@ -377,7 +421,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		length: number,
 	): void {
 		if (first) {
-			this._segmentStore = []
+			assemblyState.segments = []
 			msg.type &= ~PduConReqBit.SEGMENTED_MESSAGE
 
 			let apduHeaderLen = 3
@@ -419,16 +463,16 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 				)
 			}
 
-			this._segmentStore.push(
+			assemblyState.segments.push(
 				apdubuffer.buffer.slice(0, length + apduHeaderLen),
 			)
 		} else {
-			this._segmentStore.push(buffer.slice(offset, offset + length))
+			assemblyState.segments.push(buffer.slice(offset, offset + length))
 		}
 
 		if (!moreFollows) {
-			const apduBuffer = Buffer.concat(this._segmentStore)
-			this._segmentStore = []
+			const apduBuffer = Buffer.concat(assemblyState.segments)
+			assemblyState.segments = []
 			msg.header.apduType &= ~PduConReqBit.SEGMENTED_MESSAGE
 			this._handlePdu(apduBuffer, 0, apduBuffer.length, msg.header)
 		}
@@ -442,32 +486,37 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		offset: number,
 		length: number,
 	): void {
-		let first = false
+		const key = this._getSegmentAssemblyKey(msg, server)
+		const segmentStates = this._getSegmentAssemblyStates()
+		const state = segmentStates.get(key) ?? {
+			lastSequenceNumber: null,
+			segments: [],
+		}
+		segmentStates.set(key, state)
 
-		if (msg.sequencenumber === 0 && this._lastSequenceNumber === 0) {
-			first = true
-		} else {
-			if (msg.sequencenumber !== this._lastSequenceNumber + 1) {
+		const first =
+			msg.sequencenumber === 0 && state.lastSequenceNumber === null
+		if (!first) {
+			const expectedSequence =
+				((state.lastSequenceNumber ?? 0) + 1) & 0xff
+			if (msg.sequencenumber !== expectedSequence) {
 				return this._segmentAckResponse(
 					msg.header.sender,
 					true,
 					server,
 					msg.invokeId,
-					this._lastSequenceNumber,
+					state.lastSequenceNumber ?? 0,
 					msg.proposedWindowNumber,
 				)
 			}
 		}
 
-		this._lastSequenceNumber = msg.sequencenumber
+		state.lastSequenceNumber = msg.sequencenumber
 		const moreFollows = !!(msg.type & PduConReqBit.MORE_FOLLOWS)
 
-		if (!moreFollows) {
-			this._lastSequenceNumber = 0
-		}
-
 		if (
-			msg.sequencenumber % msg.proposedWindowNumber === 0 ||
+			(msg.proposedWindowNumber > 0 &&
+				(msg.sequencenumber + 1) % msg.proposedWindowNumber === 0) ||
 			!moreFollows
 		) {
 			this._segmentAckResponse(
@@ -482,11 +531,22 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 
 		this._performDefaultSegmentHandling(
 			msg,
+			state,
 			first,
 			moreFollows,
 			buffer,
 			offset,
 			length,
+		)
+
+		if (!moreFollows) {
+			segmentStates.delete(key)
+		}
+	}
+
+	private _processSegmentAck(msg: SegmentAckMessage): void {
+		trace(
+			`Received SegmentACK for invokeId ${msg.originalInvokeId} seq ${msg.sequencenumber} window ${msg.actualWindowSize}`,
 		)
 	}
 
@@ -627,8 +687,8 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 					{
 						msg,
 						buffer,
-						offset: offset + msg.len,
-						length: length - msg.len,
+						offset,
+						length,
 					},
 				)
 				break
@@ -639,7 +699,9 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 					offset,
 				) as ComplexAckMessage
 				msg.header = header
-				if ((header.apduType & PduConReqBit.SEGMENTED_MESSAGE) === 0) {
+				const isSegmentedMessage =
+					(header.apduType & PduConReqBit.SEGMENTED_MESSAGE) !== 0
+				if (!isSegmentedMessage) {
 					this._requestManager.resolve(
 						(msg as HasInvokeId).invokeId,
 						null,
@@ -651,6 +713,29 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 						},
 					)
 				} else {
+					const requestMaxSegments =
+						this._getPendingRequestMaxSegments().get(
+							(msg as HasInvokeId).invokeId,
+						)
+					if (
+						this._settings
+							.abortOnSegmentedResponseWhenNoSegAccepted &&
+						requestMaxSegments === MaxSegmentsAccepted.SEGMENTS_0
+					) {
+						this.abortResponse(
+							header.sender,
+							(msg as HasInvokeId).invokeId,
+							AbortReason.SEGMENTATION_NOT_SUPPORTED,
+							false,
+						)
+						this._requestManager.resolve(
+							(msg as HasInvokeId).invokeId,
+							new Error(
+								`BacnetAbort - Reason:${AbortReason.SEGMENTATION_NOT_SUPPORTED}`,
+							),
+						)
+						break
+					}
 					this._processSegment(
 						msg as SegmentableMessage &
 							(
@@ -669,14 +754,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 				msg = baApdu.decodeSegmentAck(buffer, offset) as SegmentAck &
 					BACnetMessageBase
 				msg.header = header
-				this._processSegment(
-					msg as unknown as (ConfirmedServiceRequest | ComplexAck) &
-						BACnetMessageBase,
-					true,
-					buffer,
-					offset + msg.len,
-					length - msg.len,
-				)
+				this._processSegmentAck(msg as SegmentAckMessage)
 				break
 
 			case PduType.ERROR:
@@ -1129,7 +1207,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 	): Promise<DecodeAcknowledgeSingleResult> {
 		const settings: ReadPropertyOptions = {
 			maxSegments:
-				(options as ReadPropertyOptions).maxSegments ||
+				(options as ReadPropertyOptions).maxSegments ??
 				MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu:
 				(options as ReadPropertyOptions).maxApdu ||
@@ -1179,7 +1257,10 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		)
 		this.sendBvlc(receiver, buffer)
 
-		const data = await this._requestManager.add(settings.invokeId)
+		const data = await this._awaitResponse(
+			settings.invokeId,
+			settings.maxSegments,
+		)
 
 		const result = ReadProperty.decodeAcknowledge(
 			data.buffer,
@@ -1205,7 +1286,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 	): Promise<void> {
 		const settings: WritePropertyOptions = {
 			maxSegments:
-				(options as WritePropertyOptions).maxSegments ||
+				(options as WritePropertyOptions).maxSegments ??
 				MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu:
 				(options as WritePropertyOptions).maxApdu ||
@@ -1252,7 +1333,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		)
 		this.sendBvlc(receiver, buffer)
 
-		await this._requestManager.add(settings.invokeId)
+		await this._awaitResponse(settings.invokeId, settings.maxSegments)
 	}
 
 	/**
@@ -1265,7 +1346,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 	): Promise<DecodeAcknowledgeMultipleResult> {
 		const settings = {
 			maxSegments:
-				(options as ServiceOptions).maxSegments ||
+				(options as ServiceOptions).maxSegments ??
 				MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu:
 				(options as ServiceOptions).maxApdu ||
@@ -1300,7 +1381,10 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		)
 		ReadPropertyMultiple.encode(buffer, propertiesArray)
 		this.sendBvlc(receiver, buffer)
-		const data = await this._requestManager.add(settings.invokeId)
+		const data = await this._awaitResponse(
+			settings.invokeId,
+			settings.maxSegments,
+		)
 		const result = ReadPropertyMultiple.decodeAcknowledge(
 			data.buffer,
 			data.offset,
@@ -1322,7 +1406,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 	): Promise<void> {
 		const settings = {
 			maxSegments:
-				(options as ServiceOptions).maxSegments ||
+				(options as ServiceOptions).maxSegments ??
 				MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu:
 				(options as ServiceOptions).maxApdu ||
@@ -1346,7 +1430,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		)
 		WritePropertyMultiple.encodeObject(buffer, values)
 		this.sendBvlc(receiver, buffer)
-		await this._requestManager.add(settings.invokeId)
+		await this._awaitResponse(settings.invokeId, settings.maxSegments)
 	}
 
 	/**
@@ -1367,7 +1451,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 	): Promise<void> {
 		const settings = {
 			maxSegments:
-				(options as ServiceOptions).maxSegments ||
+				(options as ServiceOptions).maxSegments ??
 				MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu:
 				(options as ServiceOptions).maxApdu ||
@@ -1405,7 +1489,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			buffer.offset,
 		)
 		this.sendBvlc(receiver, buffer)
-		await this._requestManager.add(settings.invokeId)
+		await this._awaitResponse(settings.invokeId, settings.maxSegments)
 	}
 
 	/**
@@ -1419,7 +1503,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 	): Promise<void> {
 		const settings = {
 			maxSegments:
-				(options as DeviceCommunicationOptions).maxSegments ||
+				(options as DeviceCommunicationOptions).maxSegments ??
 				MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu:
 				(options as DeviceCommunicationOptions).maxApdu ||
@@ -1452,7 +1536,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			settings.password,
 		)
 		this.sendBvlc(receiver, buffer)
-		await this._requestManager.add(settings.invokeId)
+		await this._awaitResponse(settings.invokeId, settings.maxSegments)
 	}
 
 	/**
@@ -1465,7 +1549,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 	): Promise<void> {
 		const settings = {
 			maxSegments:
-				(options as ReinitializeDeviceOptions).maxSegments ||
+				(options as ReinitializeDeviceOptions).maxSegments ??
 				MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu:
 				(options as ReinitializeDeviceOptions).maxApdu ||
@@ -1493,7 +1577,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		)
 		ReinitializeDevice.encode(buffer, state, settings.password)
 		this.sendBvlc(receiver, buffer)
-		await this._requestManager.add(settings.invokeId)
+		await this._awaitResponse(settings.invokeId, settings.maxSegments)
 	}
 
 	/**
@@ -1512,7 +1596,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		options: WriteFileOptions = {},
 	): Promise<DecodeAtomicWriteFileResult> {
 		const settings = {
-			maxSegments: options.maxSegments || MaxSegmentsAccepted.SEGMENTS_65,
+			maxSegments: options.maxSegments ?? MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu: options.maxApdu || MaxApduLengthAccepted.OCTETS_1476,
 			invokeId: options.invokeId || this._getInvokeId(),
 		}
@@ -1538,7 +1622,10 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		const blocks: number[][] = fileBuffer
 		AtomicWriteFile.encode(buffer, isStream, objectId, position, blocks)
 		this.sendBvlc(receiver, buffer)
-		const data = await this._requestManager.add(settings.invokeId)
+		const data = await this._awaitResponse(
+			settings.invokeId,
+			settings.maxSegments,
+		)
 		const result = AtomicWriteFile.decodeAcknowledge(
 			data.buffer,
 			data.offset,
@@ -1561,7 +1648,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 	): Promise<DecodeAtomicReadFileResult> {
 		const settings = {
 			maxSegments:
-				(options as ServiceOptions).maxSegments ||
+				(options as ServiceOptions).maxSegments ??
 				MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu:
 				(options as ServiceOptions).maxApdu ||
@@ -1587,7 +1674,10 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		)
 		AtomicReadFile.encode(buffer, true, objectId, position, count)
 		this.sendBvlc(receiver, buffer)
-		const data = await this._requestManager.add(settings.invokeId)
+		const data = await this._awaitResponse(
+			settings.invokeId,
+			settings.maxSegments,
+		)
 		const result = AtomicReadFile.decodeAcknowledge(
 			data.buffer,
 			data.offset,
@@ -1610,7 +1700,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 	): Promise<ReadRangeAcknowledge> {
 		const settings = {
 			maxSegments:
-				(options as ServiceOptions).maxSegments ||
+				(options as ServiceOptions).maxSegments ??
 				MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu:
 				(options as ServiceOptions).maxApdu ||
@@ -1645,7 +1735,10 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			quantity,
 		)
 		this.sendBvlc(receiver, buffer)
-		const data = await this._requestManager.add(settings.invokeId)
+		const data = await this._awaitResponse(
+			settings.invokeId,
+			settings.maxSegments,
+		)
 		const result = ReadRange.decodeAcknowledge(
 			data.buffer,
 			data.offset,
@@ -1670,7 +1763,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		options: ServiceOptions = {},
 	): Promise<void> {
 		const settings = {
-			maxSegments: options.maxSegments || MaxSegmentsAccepted.SEGMENTS_65,
+			maxSegments: options.maxSegments ?? MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu: options.maxApdu || MaxApduLengthAccepted.OCTETS_1476,
 			invokeId: options.invokeId || this._getInvokeId(),
 		}
@@ -1699,7 +1792,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			lifetime,
 		)
 		this.sendBvlc(receiver, buffer)
-		await this._requestManager.add(settings.invokeId)
+		await this._awaitResponse(settings.invokeId, settings.maxSegments)
 	}
 
 	/**
@@ -1715,7 +1808,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		options: ServiceOptions = {},
 	): Promise<void> {
 		const settings = {
-			maxSegments: options.maxSegments || MaxSegmentsAccepted.SEGMENTS_65,
+			maxSegments: options.maxSegments ?? MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu: options.maxApdu || MaxApduLengthAccepted.OCTETS_1476,
 			invokeId: options.invokeId || this._getInvokeId(),
 		}
@@ -1747,7 +1840,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			0x0f,
 		)
 		this.sendBvlc(receiver, buffer)
-		await this._requestManager.add(settings.invokeId)
+		await this._awaitResponse(settings.invokeId, settings.maxSegments)
 	}
 
 	/**
@@ -1806,7 +1899,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		options: ServiceOptions = {},
 	): Promise<void> {
 		const settings = {
-			maxSegments: options.maxSegments || MaxSegmentsAccepted.SEGMENTS_65,
+			maxSegments: options.maxSegments ?? MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu: options.maxApdu || MaxApduLengthAccepted.OCTETS_1476,
 			invokeId: options.invokeId || this._getInvokeId(),
 		}
@@ -1828,7 +1921,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		)
 		CreateObject.encode(buffer, objectId, values)
 		this.sendBvlc(receiver, buffer)
-		await this._requestManager.add(settings.invokeId)
+		await this._awaitResponse(settings.invokeId, settings.maxSegments)
 	}
 
 	/**
@@ -1840,7 +1933,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		options: ServiceOptions = {},
 	): Promise<void> {
 		const settings = {
-			maxSegments: options.maxSegments || MaxSegmentsAccepted.SEGMENTS_65,
+			maxSegments: options.maxSegments ?? MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu: options.maxApdu || MaxApduLengthAccepted.OCTETS_1476,
 			invokeId: options.invokeId || this._getInvokeId(),
 		}
@@ -1862,7 +1955,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		)
 		DeleteObject.encode(buffer, objectId)
 		this.sendBvlc(receiver, buffer)
-		await this._requestManager.add(settings.invokeId)
+		await this._awaitResponse(settings.invokeId, settings.maxSegments)
 	}
 
 	/**
@@ -1879,7 +1972,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		options: ServiceOptions = {},
 	): Promise<void> {
 		const settings = {
-			maxSegments: options.maxSegments || MaxSegmentsAccepted.SEGMENTS_65,
+			maxSegments: options.maxSegments ?? MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu: options.maxApdu || MaxApduLengthAccepted.OCTETS_1476,
 			invokeId: options.invokeId || this._getInvokeId(),
 		}
@@ -1907,7 +2000,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			values,
 		)
 		this.sendBvlc(receiver, buffer)
-		await this._requestManager.add(settings.invokeId)
+		await this._awaitResponse(settings.invokeId, settings.maxSegments)
 	}
 
 	/**
@@ -1924,7 +2017,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		options: ServiceOptions = {},
 	): Promise<void> {
 		const settings = {
-			maxSegments: options.maxSegments || MaxSegmentsAccepted.SEGMENTS_65,
+			maxSegments: options.maxSegments ?? MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu: options.maxApdu || MaxApduLengthAccepted.OCTETS_1476,
 			invokeId: options.invokeId || this._getInvokeId(),
 		}
@@ -1952,7 +2045,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			values,
 		)
 		this.sendBvlc(receiver, buffer)
-		await this._requestManager.add(settings.invokeId)
+		await this._awaitResponse(settings.invokeId, settings.maxSegments)
 	}
 
 	/**
@@ -1964,7 +2057,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 	): Promise<BACNetAlarm[]> {
 		const settings: ServiceOptions = {
 			maxSegments:
-				(options as ServiceOptions).maxSegments ||
+				(options as ServiceOptions).maxSegments ??
 				MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu:
 				(options as ServiceOptions).maxApdu ||
@@ -1989,7 +2082,10 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			0,
 		)
 		this.sendBvlc(receiver, buffer)
-		const data = await this._requestManager.add(settings.invokeId)
+		const data = await this._awaitResponse(
+			settings.invokeId,
+			settings.maxSegments,
+		)
 		const result = AlarmSummary.decode(
 			data.buffer,
 			data.offset,
@@ -2011,7 +2107,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 	): Promise<BACNetEventInformation[]> {
 		const settings: ServiceOptions = {
 			maxSegments:
-				(options as ServiceOptions).maxSegments ||
+				(options as ServiceOptions).maxSegments ??
 				MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu:
 				(options as ServiceOptions).maxApdu ||
@@ -2044,7 +2140,10 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			)
 		}
 		this.sendBvlc(receiver, buffer)
-		const data = await this._requestManager.add(settings.invokeId)
+		const data = await this._awaitResponse(
+			settings.invokeId,
+			settings.maxSegments,
+		)
 		const result = GetEventInformation.decodeAcknowledge(
 			data.buffer,
 			data.offset,
@@ -2070,7 +2169,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 	): Promise<void> {
 		const settings: ServiceOptions = {
 			maxSegments:
-				(options as ServiceOptions).maxSegments ||
+				(options as ServiceOptions).maxSegments ??
 				MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu:
 				(options as ServiceOptions).maxApdu ||
@@ -2104,7 +2203,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			ackTimeStamp,
 		)
 		this.sendBvlc(receiver, buffer)
-		await this._requestManager.add(settings.invokeId)
+		await this._awaitResponse(settings.invokeId, settings.maxSegments)
 	}
 
 	/**
@@ -2119,7 +2218,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 	): Promise<void> {
 		const settings: ServiceOptions = {
 			maxSegments:
-				(options as ServiceOptions).maxSegments ||
+				(options as ServiceOptions).maxSegments ??
 				MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu:
 				(options as ServiceOptions).maxApdu ||
@@ -2145,7 +2244,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		)
 		PrivateTransfer.encode(buffer, vendorId, serviceNumber, data)
 		this.sendBvlc(receiver, buffer)
-		await this._requestManager.add(settings.invokeId)
+		await this._awaitResponse(settings.invokeId, settings.maxSegments)
 	}
 
 	/**
@@ -2177,7 +2276,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		options: EnrollmentOptions = {},
 	): Promise<EnrollmentSummaryAcknowledge> {
 		const settings: ServiceOptions = {
-			maxSegments: options.maxSegments || MaxSegmentsAccepted.SEGMENTS_65,
+			maxSegments: options.maxSegments ?? MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu: options.maxApdu || MaxApduLengthAccepted.OCTETS_1476,
 			invokeId: options.invokeId || this._getInvokeId(),
 		}
@@ -2207,7 +2306,10 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			options.notificationClassFilter,
 		)
 		this.sendBvlc(receiver, buffer)
-		const data = await this._requestManager.add(settings.invokeId)
+		const data = await this._awaitResponse(
+			settings.invokeId,
+			settings.maxSegments,
+		)
 		const result = GetEnrollmentSummary.decodeAcknowledge(
 			data.buffer,
 			data.offset,
@@ -2247,7 +2349,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 	): Promise<void> {
 		const settings: ServiceOptions = {
 			maxSegments:
-				(options as ServiceOptions).maxSegments ||
+				(options as ServiceOptions).maxSegments ??
 				MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu:
 				(options as ServiceOptions).maxApdu ||
@@ -2273,7 +2375,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		)
 		EventNotifyData.encode(buffer, eventNotification)
 		this.sendBvlc(receiver, buffer)
-		await this._requestManager.add(settings.invokeId)
+		await this._awaitResponse(settings.invokeId, settings.maxSegments)
 	}
 
 	/**
@@ -2412,6 +2514,36 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 	}
 
 	/**
+	 * Sends a reject response.
+	 */
+	rejectResponse(
+		receiver: BACNetAddress,
+		invokeId: number,
+		rejectReason: number,
+	): void {
+		const buffer = this._getApduBuffer(receiver)
+		baNpdu.encode(buffer, NpduControlPriority.NORMAL_MESSAGE, receiver)
+		baApdu.encodeAbort(buffer, PduType.REJECT, invokeId, rejectReason)
+		this.sendBvlc(receiver, buffer)
+	}
+
+	/**
+	 * Sends an abort response.
+	 */
+	abortResponse(
+		receiver: BACNetAddress,
+		invokeId: number,
+		abortReason: number,
+		isServer = true,
+	): void {
+		const buffer = this._getApduBuffer(receiver)
+		baNpdu.encode(buffer, NpduControlPriority.NORMAL_MESSAGE, receiver)
+		const pduType = PduType.ABORT | (isServer ? 0x01 : 0x00)
+		baApdu.encodeAbort(buffer, pduType, invokeId, abortReason)
+		this.sendBvlc(receiver, buffer)
+	}
+
+	/**
 	 * Sends a BACnet Virtual Link Control message.
 	 */
 	sendBvlc(receiver: BACNetAddress | null, buffer: EncodeBuffer): void {
@@ -2477,6 +2609,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			}
 			this._pendingForeignDeviceRegistrations.clear()
 		}
+		this._segmentAssemblyStates?.clear()
 		this._transport.close()
 	}
 

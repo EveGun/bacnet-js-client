@@ -18,6 +18,7 @@ import {
 	ServicesSupported,
 	TimeStamp,
 } from '../../src'
+import { PduConReqBit, PduType } from '../../src/lib/enum'
 
 test.describe('bacnet - client', () => {
 	test('should successfuly encode a bitstring > 32 bits', () => {
@@ -169,6 +170,140 @@ test.describe('bacnet - client', () => {
 			sentData.length - bvlc.len,
 		)
 		assert.strictEqual(payload.ttl, 60)
+	})
+
+	test('simple ack should resolve with payload offset/length after APDU header only once', () => {
+		const client = Object.create(BACnetClient.prototype) as BACnetClient & {
+			_requestManager: {
+				resolve: (
+					invokeId: number,
+					err: Error | null,
+					result?: { offset: number; length: number; buffer: Buffer },
+				) => void
+			}
+			_handlePdu: (
+				buffer: Buffer,
+				offset: number,
+				length: number,
+				header: {
+					apduType: number
+					sender: { address: string }
+					expectingReply: boolean
+					confirmedService: boolean
+				},
+			) => void
+		}
+
+		let resolved:
+			| { invokeId: number; offset: number; length: number }
+			| undefined
+		client._requestManager = {
+			resolve: (invokeId, _err, result) => {
+				resolved = {
+					invokeId,
+					offset: result?.offset ?? -1,
+					length: result?.length ?? -1,
+				}
+			},
+		}
+
+		const buffer = Buffer.alloc(16)
+		const apdu = { buffer, offset: 0 }
+		baApdu.encodeSimpleAck(apdu, PduType.SIMPLE_ACK, 5, 7)
+		buffer[apdu.offset++] = 0xaa
+		buffer[apdu.offset++] = 0xbb
+
+		client._handlePdu(buffer, 0, apdu.offset, {
+			apduType: PduType.SIMPLE_ACK,
+			sender: { address: '127.0.0.1:47808' },
+			expectingReply: false,
+			confirmedService: false,
+		})
+
+		assert.ok(resolved)
+		assert.equal(resolved.invokeId, 7)
+		assert.equal(resolved.offset, 3)
+		assert.equal(resolved.length, 2)
+	})
+
+	test('segmentation tracking should be isolated per invokeId', () => {
+		const client = Object.create(BACnetClient.prototype) as BACnetClient & {
+			_processSegment: (...args: any[]) => void
+			_segmentAckResponse: (
+				_receiver: { address: string },
+				negative: boolean,
+			) => void
+			_performDefaultSegmentHandling: () => void
+		}
+		let negativeAcks = 0
+		client._segmentAckResponse = (_receiver, negative) => {
+			if (negative) negativeAcks++
+		}
+		client._performDefaultSegmentHandling = () => {}
+
+		const makeMsg = (invokeId: number, sequence: number) =>
+			({
+				type:
+					PduType.CONFIRMED_REQUEST |
+					PduConReqBit.SEGMENTED_MESSAGE |
+					PduConReqBit.MORE_FOLLOWS,
+				invokeId,
+				sequencenumber: sequence,
+				proposedWindowNumber: 10,
+				header: {
+					apduType: PduType.CONFIRMED_REQUEST,
+					sender: { address: '127.0.0.1:47808' },
+					expectingReply: true,
+					confirmedService: true,
+				},
+			}) as any
+
+		client._processSegment(makeMsg(1, 0), true, Buffer.alloc(0), 0, 0)
+		client._processSegment(makeMsg(1, 1), true, Buffer.alloc(0), 0, 0)
+		client._processSegment(makeMsg(2, 0), true, Buffer.alloc(0), 0, 0)
+
+		assert.equal(negativeAcks, 0)
+	})
+
+	test('segment ack PDU should not be routed through segment reassembly', () => {
+		const client = Object.create(BACnetClient.prototype) as BACnetClient & {
+			_handlePdu: (
+				buffer: Buffer,
+				offset: number,
+				length: number,
+				header: {
+					apduType: number
+					sender: { address: string }
+					expectingReply: boolean
+					confirmedService: boolean
+				},
+			) => void
+			_processSegment: () => void
+			_processSegmentAck: () => void
+		}
+
+		let routedToSegment = false
+		let routedToSegmentAck = false
+		client._processSegment = () => {
+			routedToSegment = true
+		}
+		client._processSegmentAck = () => {
+			routedToSegmentAck = true
+		}
+
+		const buffer = Buffer.alloc(8)
+		const apdu = { buffer, offset: 0 }
+		baApdu.encodeSegmentAck(apdu, PduType.SEGMENT_ACK, 7, 3, 10)
+
+		client._handlePdu(buffer, 0, apdu.offset, {
+			apduType: PduType.SEGMENT_ACK,
+			sender: { address: '127.0.0.1:47808' },
+			expectingReply: false,
+			confirmedService: false,
+		})
+
+		assert.equal(routedToSegment, false)
+		assert.equal(routedToSegmentAck, true)
 	})
 
 	test('registerForeignDevice should accept BVLC result sender without default port', async () => {
