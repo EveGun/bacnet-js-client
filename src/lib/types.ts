@@ -912,16 +912,27 @@ export interface LogRecordStatusFlags {
 }
 
 /**
+ * BACnet Error for the failure [8] log-datum choice per ASHRAE 135 §12.25.
+ */
+export interface LogRecordFailure {
+	errorClass: number
+	errorCode: number
+}
+
+/**
  * Union type for log record values per ASHRAE 135 §12.25.
  * log-datum CHOICE can contain various types depending on the logged property.
  */
 export type LogRecordValue =
-	| number // REAL, ENUMERATED, UNSIGNED_INTEGER, SIGNED_INTEGER
+	| number // REAL, ENUMERATED, UNSIGNED_INTEGER, SIGNED_INTEGER, DOUBLE
 	| boolean // BOOLEAN
-	| BACNetBitString // log-status bitstring
+	| BACNetBitString // log-status or bitstring-value
 	| null // NULL
-	| string // CHARACTER_STRING
-	| BACNetObjectID // OBJECTIDENTIFIER
+	| string // CHARACTER_STRING (via any-value)
+	| BACNetObjectID // OBJECTIDENTIFIER (via any-value)
+	| Buffer // OCTET_STRING (via any-value)
+	| Date // DATE / TIME (via any-value)
+	| LogRecordFailure // failure (BACnetError)
 
 /**
  * LogRecord per ASHRAE 135 §12.25.
@@ -950,6 +961,17 @@ export interface LogRecord {
 	 */
 	isTimeChange?: boolean
 	/**
+	 * True if this is a failure record (the monitored property read failed).
+	 * The value is then a LogRecordFailure with errorClass/errorCode.
+	 * Undefined for all other record types.
+	 */
+	isFailure?: boolean
+	/**
+	 * ApplicationTag describing the decoded value. Useful for any-value [10]
+	 * records where the datum can be any application-tagged type.
+	 */
+	valueType?: number
+	/**
 	 * Present only for log-status records. Indicates which special status applies.
 	 */
 	logStatus?: LogStatusFlags
@@ -968,6 +990,17 @@ export interface ReadRangeAcknowledge {
 	rangeBuffer: Buffer
 	values?: LogRecord[]
 	len: number
+}
+
+export interface ReadRangeOptions extends ServiceOptions {
+	/** Property to read (default: LOG_BUFFER = 131) */
+	propertyId?: number
+	/** Array index (default: ARRAY_ALL) */
+	arrayIndex?: number
+	/** Range selection type (default: BY_POSITION) */
+	requestType?: number
+	/** Reference time for BY_TIME requests */
+	time?: Date
 }
 
 export interface EnrollmentSummary {

@@ -90,6 +90,7 @@ import {
 	DecodeAtomicWriteFileResult,
 	DecodeAtomicReadFileResult,
 	ReadRangeAcknowledge,
+	ReadRangeOptions,
 	EnrollmentOptions,
 	EnrollmentSummaryAcknowledge,
 	EventNotifyDataParams,
@@ -2495,14 +2496,19 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 	}
 
 	/**
-	 * Reads a range of data from a remote device.
+	 * Reads a range of data from a remote device with BACnet `ReadRange`.
+	 *
+	 * Defaults to `LOG_BUFFER` and `BY_POSITION` for common Trend Log
+	 * access; `options` may select another property, array index, range
+	 * type, or reference time for BY_TIME requests. Returns both raw ACK
+	 * data and decoded `LogRecord[]` when item-data parsing succeeds.
 	 */
 	async readRange(
 		receiver: BACNetAddress,
 		objectId: BACNetObjectID,
 		idxBegin: number,
 		quantity: number,
-		options: ServiceOptions = {},
+		options: ReadRangeOptions = {},
 	): Promise<ReadRangeAcknowledge> {
 		const settings = {
 			maxSegments:
@@ -2514,6 +2520,10 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			invokeId:
 				(options as ServiceOptions).invokeId || this._getInvokeId(),
 		}
+		const propertyId = options.propertyId ?? PropertyIdentifier.LOG_BUFFER
+		const arrayIndex = options.arrayIndex ?? ASN1_ARRAY_ALL
+		const requestType = options.requestType ?? ReadRangeType.BY_POSITION
+		const time = options.time ?? new Date()
 		const data = await this._sendConfirmedRequest({
 			receiver,
 			service: ConfirmedServiceChoice.READ_RANGE,
@@ -2525,11 +2535,11 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 				ReadRange.encode(
 					buffer,
 					objectId,
-					PropertyIdentifier.LOG_BUFFER,
-					ASN1_ARRAY_ALL,
-					ReadRangeType.BY_POSITION,
+					propertyId,
+					arrayIndex,
+					requestType,
 					idxBegin,
-					new Date(),
+					time,
 					quantity,
 				),
 		})
