@@ -213,6 +213,30 @@ test.describe('ReadPropertyAcknowledge schedule/calendar compatibility', () => {
 		assert.equal(day[0].value?.value, 18.5)
 	})
 
+	test('should decode empty daily schedule for an indexed read', () => {
+		const buffer = utils.getBuffer()
+		encodeReadPropertyAckHeader(
+			buffer,
+			ObjectType.SCHEDULE,
+			17,
+			PropertyIdentifier.WEEKLY_SCHEDULE,
+			4,
+		)
+		baAsn1.encodeOpeningTag(buffer, 0)
+		baAsn1.encodeClosingTag(buffer, 0)
+		baAsn1.encodeClosingTag(buffer, 3)
+
+		const result = ReadProperty.decodeAcknowledge(
+			buffer.buffer,
+			0,
+			buffer.offset,
+		)
+		assert.ok(result)
+		assert.equal(result.property.index, 4)
+		assert.equal(result.values[0].type, ApplicationTag.WEEKLY_SCHEDULE)
+		assert.deepStrictEqual(result.values[0].value, [])
+	})
+
 	test('should decode exception schedule array size when array index is 0', () => {
 		const buffer = utils.getBuffer()
 		encodeReadPropertyAckHeader(

@@ -214,6 +214,45 @@ test.describe('bacnet - Services layer WritePropertyMultiple unit', () => {
 		assert.equal(cleanResult.values[0].value[0].value, 7)
 	})
 
+	test('should preserve both array index and priority on the same entry', () => {
+		const buffer = utils.getBuffer()
+		WritePropertyMultiple.encode(
+			buffer,
+			{ type: ObjectType.SCHEDULE, instance: 1 },
+			[
+				{
+					property: {
+						id: PropertyIdentifier.WEEKLY_SCHEDULE,
+						index: 3,
+					},
+					value: [
+						{
+							time: {
+								type: ApplicationTag.TIME,
+								value: new Date(2024, 0, 3, 8, 0),
+							},
+							value: { type: ApplicationTag.REAL, value: 21.5 },
+						},
+					] as any,
+					priority: 12,
+				},
+			],
+		)
+		const result = WritePropertyMultiple.decode(
+			buffer.buffer,
+			0,
+			buffer.offset,
+		)
+		const cleanResult = removeLen(result)
+		assert.equal(cleanResult.values[0].property.index, 3)
+		assert.equal(cleanResult.values[0].priority, 12)
+		assert.equal(
+			cleanResult.values[0].value[0].type,
+			ApplicationTag.WEEKLY_SCHEDULE,
+		)
+		assert.equal(cleanResult.values[0].value[0].value[0].value.value, 21.5)
+	})
+
 	test('should encode weekly schedule index 0 array size from app-data wrapper', () => {
 		const buffer = utils.getBuffer()
 		WritePropertyMultiple.encode(

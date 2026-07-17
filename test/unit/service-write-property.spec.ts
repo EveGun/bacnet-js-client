@@ -454,6 +454,52 @@ test.describe('WriteProperty schedule/calendar compatibility', () => {
 		assert.equal(weekly.value[0][0].value?.value, 18.5)
 	})
 
+	test('should encode empty daily schedule when clearing an indexed day', () => {
+		const buffer = utils.getBuffer()
+		WriteProperty.encode(
+			buffer,
+			ObjectType.SCHEDULE,
+			0,
+			PropertyIdentifier.WEEKLY_SCHEDULE,
+			4,
+			0,
+			[] as any,
+		)
+		const result = WriteProperty.decode(buffer.buffer, 0, buffer.offset)
+		assert.ok(result)
+		assert.equal(result.value.property.index, 4)
+
+		let payloadOffset = -1
+		for (let i = 0; i < buffer.offset; i++) {
+			if (baAsn1.decodeIsOpeningTagNumber(buffer.buffer, i, 3)) {
+				payloadOffset = i + 1
+				break
+			}
+		}
+		assert.notEqual(payloadOffset, -1)
+		// The wire payload must contain exactly one empty day group:
+		// opening tag 0 (0x0e) immediately followed by closing tag 0 (0x0f).
+		let payloadEnd = -1
+		for (let i = payloadOffset; i < buffer.offset; i++) {
+			if (baAsn1.decodeIsClosingTagNumber(buffer.buffer, i, 3)) {
+				payloadEnd = i
+				break
+			}
+		}
+		assert.notEqual(payloadEnd, -1)
+		assert.deepStrictEqual(
+			[...buffer.buffer.subarray(payloadOffset, payloadEnd)],
+			[0x0e, 0x0f],
+		)
+		const weekly = baAsn1.decodeWeeklySchedule(
+			buffer.buffer,
+			payloadOffset,
+			buffer.offset - payloadOffset,
+		)
+		assert.ok(weekly)
+		assert.deepStrictEqual(weekly.value[0], [])
+	})
+
 	test('should reject weekly schedule write with out-of-range array index', () => {
 		const buffer = utils.getBuffer()
 		const day = [

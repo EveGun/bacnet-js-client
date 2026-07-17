@@ -281,10 +281,14 @@ export type BACNetArraySizeValue =
 	| BACNetAppData<ApplicationTag.UNSIGNED_INTEGER, number>
 
 /**
- * Supported payloads for writing `WEEKLY_SCHEDULE`.
+ * Supported payloads for writing `WEEKLY_SCHEDULE` (BACnetARRAY[7] of
+ * BACnetDailySchedule).
  * - full property (`arrayIndex = ASN1_ARRAY_ALL`): `BACNetTimeValueEntry[][]`
- * - single day (`arrayIndex = 1..7`): `BACNetTimeValueEntry[]`
- * - array size (`arrayIndex = 0`): unsigned integer length
+ *   with exactly 7 days
+ * - single day (`arrayIndex = 1..7`): `BACNetTimeValueEntry[]` (an empty
+ *   array clears the day)
+ * - array size (`arrayIndex = 0`): unsigned integer length; must be 7 since
+ *   the array is fixed-size per ASHRAE 135 §12.24.7
  */
 export type BACNetWeeklyScheduleWriteValue =
 	| BACNetWeeklySchedulePayload
@@ -292,10 +296,14 @@ export type BACNetWeeklyScheduleWriteValue =
 	| BACNetArraySizeValue
 
 /**
- * Supported payloads for writing `EXCEPTION_SCHEDULE`.
+ * Supported payloads for writing `EXCEPTION_SCHEDULE` (resizable BACnetARRAY
+ * of BACnetSpecialEvent).
  * - full property (`arrayIndex = ASN1_ARRAY_ALL`): `BACNetSpecialEventEntry[]`
- * - single entry (`arrayIndex >= 1`): `BACNetSpecialEventEntry`
- * - array size (`arrayIndex = 0`): unsigned integer length
+ * - single entry (`arrayIndex >= 1`): one `BACNetSpecialEventEntry`
+ *   (preferred form; a one-element array is also accepted for compatibility)
+ * - array size (`arrayIndex = 0`): unsigned integer length. Resizing via
+ *   index 0 is valid per the BACnet array model (ASHRAE 135 §19.2.1) but
+ *   device-dependent — many devices reject it or only support truncation.
  */
 export type BACNetExceptionScheduleWriteValue =
 	| BACNetExceptionSchedulePayload
@@ -303,27 +311,22 @@ export type BACNetExceptionScheduleWriteValue =
 	| BACNetArraySizeValue
 
 /**
- * Supported payloads for writing `EFFECTIVE_PERIOD`.
- * - full property (`arrayIndex = ASN1_ARRAY_ALL`): `[startDate, endDate]`
- * - indexed date (`arrayIndex = 1..2`): single date
- * - array size (`arrayIndex = 0`): unsigned integer length
+ * Supported payload for writing `EFFECTIVE_PERIOD`: `[startDate, endDate]`.
+ *
+ * `EFFECTIVE_PERIOD` is a `BACnetDateRange`, not a BACnetARRAY — indexed
+ * access (any `arrayIndex`, including 0) is rejected by the encoder.
  */
-export type BACNetEffectivePeriodWriteValue =
-	| BACNetEffectivePeriodPayload
-	| BACNetDateAppData
-	| BACNetDateValue
-	| BACNetArraySizeValue
+export type BACNetEffectivePeriodWriteValue = BACNetEffectivePeriodPayload
 
 /**
- * Supported payloads for writing `DATE_LIST`.
- * - full property (`arrayIndex = ASN1_ARRAY_ALL`): calendar entry array
- * - single entry (`arrayIndex >= 1`): one calendar entry
- * - array size (`arrayIndex = 0`): unsigned integer length
+ * Supported payload for writing `DATE_LIST`: a calendar entry array.
+ *
+ * `DATE_LIST` is a `BACnetLIST of BACnetCalendarEntry`, not a BACnetARRAY —
+ * indexed access (any `arrayIndex`, including 0) is rejected by the encoder.
+ * Modify it with a full-property write or the AddListElement /
+ * RemoveListElement services.
  */
-export type BACNetCalendarDateListWriteValue =
-	| BACNetCalendarDateListPayload
-	| BACNetCalendarDateListEntry
-	| BACNetArraySizeValue
+export type BACNetCalendarDateListWriteValue = BACNetCalendarDateListPayload
 
 export type BACNetWritePropertyValues =
 	| BACNetAppData[]
