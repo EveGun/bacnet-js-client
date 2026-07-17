@@ -458,6 +458,31 @@ export const encodeBacnetDate = (buffer: EncodeBuffer, value: Date): void => {
 	buffer.buffer[buffer.offset++] = value.getDay() === 0 ? 7 : value.getDay()
 }
 
+export const encodeBacnetDateUtc = (
+	buffer: EncodeBuffer,
+	value: Date,
+): void => {
+	if (value === ZERO_DATE) {
+		buffer.buffer[buffer.offset++] = 0xff
+		buffer.buffer[buffer.offset++] = 0xff
+		buffer.buffer[buffer.offset++] = 0xff
+		buffer.buffer[buffer.offset++] = 0xff
+		return
+	}
+
+	if (value.getUTCFullYear() >= START_YEAR) {
+		buffer.buffer[buffer.offset++] = value.getUTCFullYear() - START_YEAR
+	} else if (value.getUTCFullYear() < MAX_YEARS /* 1900 + 255 max */) {
+		buffer.buffer[buffer.offset++] = value.getUTCFullYear()
+	} else {
+		throw new Error(`invalid year: ${value.getUTCFullYear()}`)
+	}
+	buffer.buffer[buffer.offset++] = value.getUTCMonth() + 1
+	buffer.buffer[buffer.offset++] = value.getUTCDate()
+	buffer.buffer[buffer.offset++] =
+		value.getUTCDay() === 0 ? 7 : value.getUTCDay()
+}
+
 const validateRawDateByte = (
 	name: string,
 	value: number,
@@ -504,11 +529,36 @@ export const encodeApplicationDate = (
 	}
 }
 
+export const encodeApplicationDateUtc = (
+	buffer: EncodeBuffer,
+	value: Date | number,
+): void => {
+	if (typeof value === 'number' && !Number.isFinite(value)) {
+		throw new Error(`invalid timestamp: ${value}`)
+	}
+	const normalized = typeof value === 'number' ? new Date(value) : value
+	if (Number.isNaN(normalized.getTime())) {
+		throw new Error(`invalid date: ${value}`)
+	}
+	encodeTag(buffer, ApplicationTag.DATE, false, 4)
+	encodeBacnetDateUtc(buffer, normalized)
+}
+
 const encodeBacnetTime = (buffer: EncodeBuffer, value: Date): void => {
 	buffer.buffer[buffer.offset++] = value.getHours()
 	buffer.buffer[buffer.offset++] = value.getMinutes()
 	buffer.buffer[buffer.offset++] = value.getSeconds()
 	buffer.buffer[buffer.offset++] = value.getMilliseconds() / 10
+}
+
+const encodeBacnetTimeUtc = (buffer: EncodeBuffer, value: Date): void => {
+	buffer.buffer[buffer.offset++] = value.getUTCHours()
+	buffer.buffer[buffer.offset++] = value.getUTCMinutes()
+	buffer.buffer[buffer.offset++] = value.getUTCSeconds()
+	buffer.buffer[buffer.offset++] = Math.min(
+		99,
+		Math.round(value.getUTCMilliseconds() / 10),
+	)
 }
 
 export const encodeApplicationTime = (
@@ -526,6 +576,21 @@ export const encodeApplicationTime = (
 
 	encodeTag(buffer, ApplicationTag.TIME, false, 4)
 	encodeBacnetTime(buffer, normalized)
+}
+
+export const encodeApplicationTimeUtc = (
+	buffer: EncodeBuffer,
+	value: Date | number,
+): void => {
+	if (typeof value === 'number' && !Number.isFinite(value)) {
+		throw new Error(`invalid timestamp: ${value}`)
+	}
+	const normalized = typeof value === 'number' ? new Date(value) : value
+	if (Number.isNaN(normalized.getTime())) {
+		throw new Error(`invalid time: ${value}`)
+	}
+	encodeTag(buffer, ApplicationTag.TIME, false, 4)
+	encodeBacnetTimeUtc(buffer, normalized)
 }
 
 const bacappEncodeDatetime = (buffer: EncodeBuffer, value: Date): void => {

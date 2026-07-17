@@ -525,12 +525,27 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			name as keyof typeof ServicesMap
 		] as BacnetService
 
-		if (serviceHandler) {
-			try {
-				content.payload = serviceHandler.decode(buffer, offset, length)
-				trace(
-					`Handled service request${id}:`,
-					name,
+			if (serviceHandler) {
+				try {
+					const utcDecoder = serviceHandler as {
+						decode: (
+							buffer: Buffer,
+							offset: number,
+							apduLen: number,
+						) => unknown
+						decodeUtc?: (
+							buffer: Buffer,
+							offset: number,
+							apduLen: number,
+						) => unknown
+					}
+					content.payload =
+						name === 'timeSyncUTC' && typeof utcDecoder.decodeUtc === 'function'
+							? utcDecoder.decodeUtc(buffer, offset, length)
+							: serviceHandler.decode(buffer, offset, length)
+					trace(
+						`Handled service request${id}:`,
+						name,
 					JSON.stringify(content),
 				)
 			} catch (e) {
@@ -983,7 +998,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 	/**
 	 * The timeSyncUTC command sets the UTC time of a target device.
 	 */
-	timeSyncUTC(receiver: BACNetAddress, dateTime: Date): void {
+	timeSyncUTC(receiver: BACNetAddress, dateTime: Date | number): void {
 		const buffer = this._getApduBuffer(receiver)
 		baNpdu.encode(buffer, NpduControlPriority.NORMAL_MESSAGE, receiver)
 		baApdu.encodeUnconfirmedServiceRequest(
@@ -991,7 +1006,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			PduType.UNCONFIRMED_REQUEST,
 			UnconfirmedServiceChoice.UTC_TIME_SYNCHRONIZATION,
 		)
-		TimeSync.encode(buffer, dateTime)
+		TimeSync.encodeUtc(buffer, dateTime)
 		this.sendBvlc(receiver, buffer)
 	}
 
