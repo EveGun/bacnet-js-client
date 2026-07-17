@@ -1,4 +1,5 @@
 import * as iconv from 'iconv-lite'
+import debugLib from 'debug'
 
 import {
 	EncodeBuffer,
@@ -51,6 +52,8 @@ import {
 	TimeStamp,
 } from './enum'
 
+const trace = debugLib('bacnet:asn1:trace')
+
 export const START_YEAR = 1900
 export const MAX_YEARS = 256
 export const ZERO_DATE = new Date(START_YEAR, 0, 1)
@@ -89,6 +92,10 @@ const getEncodingType = (
 				return 'ucs2'
 			}
 			return 'UTF-16BE' // Default to big-endian
+		case CharacterStringEncoding.UCS_4:
+			// UCS-4 is handled by dedicated codec paths and should never
+			// use iconv fallback encoding.
+			throw new Error('UCS-4 must use dedicated codec path')
 		case CharacterStringEncoding.ISO_8859_1:
 			return 'latin1'
 		case CharacterStringEncoding.MICROSOFT_DBCS:
@@ -98,6 +105,71 @@ const getEncodingType = (
 		default:
 			return 'utf8'
 	}
+}
+
+const decodeUcs4CharacterString = (
+	buffer: Buffer,
+	offset: number,
+	length: number,
+): string => {
+	if (length <= 0) return ''
+	let littleEndian = false
+	let startOffset = 0
+	if (length >= 4) {
+		const b0 = buffer[offset]
+		const b1 = buffer[offset + 1]
+		const b2 = buffer[offset + 2]
+		const b3 = buffer[offset + 3]
+		if (b0 === 0x00 && b1 === 0x00 && b2 === 0xfe && b3 === 0xff) {
+			startOffset = 4
+		} else if (b0 === 0xff && b1 === 0xfe && b2 === 0x00 && b3 === 0x00) {
+			littleEndian = true
+			startOffset = 4
+		}
+	}
+
+	let value = ''
+	for (let i = offset + startOffset; i + 3 < offset + length; i += 4) {
+		const codePoint = littleEndian
+			? (buffer[i] |
+					(buffer[i + 1] << 8) |
+					(buffer[i + 2] << 16) |
+					(buffer[i + 3] << 24)) >>>
+				0
+			: ((buffer[i] << 24) |
+					(buffer[i + 1] << 16) |
+					(buffer[i + 2] << 8) |
+					buffer[i + 3]) >>>
+				0
+		const normalizedCodePoint =
+			codePoint > 0x10ffff || (codePoint >= 0xd800 && codePoint <= 0xdfff)
+				? 0xfffd
+				: codePoint
+		value += String.fromCodePoint(normalizedCodePoint)
+	}
+	const trailingBytes = (length - startOffset) % 4
+	if (trailingBytes !== 0) {
+		trace(
+			`decodeUcs4CharacterString: ignoring ${trailingBytes} trailing byte(s)`,
+		)
+	}
+
+	return value
+}
+
+const encodeUcs4CharacterString = (value: string): Buffer => {
+	const codePoints = Array.from(value)
+	const encoded = Buffer.alloc(codePoints.length * 4)
+	let offset = 0
+	for (const c of codePoints) {
+		const codePoint = c.codePointAt(0) ?? 0
+		encoded[offset] = (codePoint >>> 24) & 0xff
+		encoded[offset + 1] = (codePoint >>> 16) & 0xff
+		encoded[offset + 2] = (codePoint >>> 8) & 0xff
+		encoded[offset + 3] = codePoint & 0xff
+		offset += 4
+	}
+	return encoded
 }
 
 export const encodeUnsigned = (
@@ -548,7 +620,10 @@ const encodeBacnetTime = (buffer: EncodeBuffer, value: Date): void => {
 	buffer.buffer[buffer.offset++] = value.getHours()
 	buffer.buffer[buffer.offset++] = value.getMinutes()
 	buffer.buffer[buffer.offset++] = value.getSeconds()
-	buffer.buffer[buffer.offset++] = value.getMilliseconds() / 10
+	buffer.buffer[buffer.offset++] = Math.min(
+		99,
+		Math.round(value.getMilliseconds() / 10),
+	)
 }
 
 const encodeBacnetTimeUtc = (buffer: EncodeBuffer, value: Date): void => {
@@ -1538,6 +1613,13 @@ const multiCharsetCharacterstringDecode = (
 	encoding: number,
 	length: number,
 ): CharacterString => {
+	if (encoding === CharacterStringEncoding.UCS_4) {
+		return {
+			value: decodeUcs4CharacterString(buffer, offset, length),
+			len: length + 1,
+			encoding,
+		}
+	}
 	const stringBuf = Buffer.alloc(length)
 	buffer.copy(stringBuf, 0, offset, offset + length)
 	return {
@@ -1705,7 +1787,7 @@ export const decodeBacnetTime = (
 	const sec = buffer[offset + 2]
 	let hundredths = buffer[offset + 3]
 	if (hour !== 0xff || min !== 0xff || sec !== 0xff || hundredths !== 0xff) {
-		if (hundredths > 100) hundredths = 0
+		if (hundredths >= 100) hundredths = 0
 		value.setHours(hour)
 		value.setMinutes(min)
 		value.setSeconds(sec)
@@ -3281,7 +3363,10 @@ const encodeBacnetCharacterString = (
 ): void => {
 	encoding = encoding || CharacterStringEncoding.UTF_8
 	buffer.buffer[buffer.offset++] = encoding
-	const bufEncoded = iconv.encode(value, getEncodingType(encoding))
+	const bufEncoded =
+		encoding === CharacterStringEncoding.UCS_4
+			? encodeUcs4CharacterString(value)
+			: iconv.encode(value, getEncodingType(encoding))
 	buffer.offset += bufEncoded.copy(buffer.buffer, buffer.offset)
 }
 
