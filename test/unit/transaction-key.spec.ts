@@ -2,8 +2,10 @@ import test from 'node:test'
 import assert from 'node:assert'
 
 import {
+	getLinkKey,
 	getPeerKey,
 	getTransactionKey,
+	isRoutedPeer,
 	normalizeAddress,
 	UNKNOWN_PEER_KEY,
 } from '../../src/lib/transaction-key'
@@ -125,7 +127,62 @@ test.describe('bacnet - transaction key helpers', () => {
 		})
 	})
 
+	test.describe('getLinkKey', () => {
+		test('is the normalized ip:port endpoint', () => {
+			assert.strictEqual(
+				getLinkKey({ address: '1.2.3.4' }),
+				'1.2.3.4:47808',
+			)
+			assert.strictEqual(getLinkKey(undefined), UNKNOWN_PEER_KEY)
+			assert.strictEqual(getLinkKey({}), UNKNOWN_PEER_KEY)
+		})
+
+		test('prefers the forwarded originating address over the BBMD address', () => {
+			assert.strictEqual(
+				getLinkKey({
+					address: '10.0.0.1:47808',
+					forwardedFrom: '10.0.0.5',
+				}),
+				'10.0.0.5:47808',
+			)
+		})
+
+		test('ignores the routed net/adr component', () => {
+			assert.strictEqual(
+				getLinkKey({ address: '10.0.0.1', net: 100, adr: [1] }),
+				getLinkKey({ address: '10.0.0.1' }),
+			)
+		})
+	})
+
+	test.describe('isRoutedPeer', () => {
+		test('is true only for wire-encoded routed destinations', () => {
+			assert.strictEqual(isRoutedPeer({ address: 'a', net: 1 }), true)
+			assert.strictEqual(isRoutedPeer({ address: 'a', net: 0 }), false)
+			assert.strictEqual(
+				isRoutedPeer({ address: 'a', net: 0xffff }),
+				false,
+			)
+			assert.strictEqual(isRoutedPeer({ address: 'a' }), false)
+			assert.strictEqual(isRoutedPeer(undefined), false)
+		})
+	})
+
 	test.describe('getTransactionKey', () => {
+		test('is link-scoped: net/adr never contributes (INVARIANT)', () => {
+			// Coupled with link-scoped invokeId allocation in the client —
+			// see the INVARIANT note in transaction-key.ts.
+			const router = '10.0.0.1:47808'
+			assert.strictEqual(
+				getTransactionKey({ address: router, net: 100, adr: [1] }, 9),
+				getTransactionKey({ address: router }, 9),
+			)
+			assert.strictEqual(
+				getTransactionKey({ address: router, net: 100, adr: [2] }, 9),
+				getTransactionKey({ address: router, net: 100, adr: [1] }, 9),
+			)
+		})
+
 		test('separates transactions by invokeId for the same peer', () => {
 			const peer = { address: '1.2.3.4' }
 			assert.notStrictEqual(

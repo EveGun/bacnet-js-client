@@ -131,9 +131,12 @@ import {
 } from './enum'
 import { RequestManager } from './request-manager'
 import {
+	getLinkKey,
 	getPeerKey,
 	getTransactionKey,
+	isRoutedPeer,
 	normalizeAddress,
+	UNKNOWN_PEER_KEY,
 } from './transaction-key'
 
 import { Buffer } from 'buffer'
@@ -159,12 +162,6 @@ const MAX_SEGMENT_WINDOW_SIZE = 127
 const DEFAULT_SEGMENT_MAX_RETRIES = 3
 // Scratch buffer for encoding a segmented service payload before splitting.
 const OUTGOING_SEGMENT_PAYLOAD_BUFFER_LENGTH = 1 << 20
-// Upper bound on remembered per-peer invokeId counters. Counters for the
-// least recently used peers without pending requests are evicted beyond
-// this, so long-lived clients scanning many transient peers do not grow
-// without bound. Losing a counter is harmless: allocation restarts at 0
-// and pending invokeIds are tracked separately in _activeInvokeIds.
-const MAX_INVOKE_COUNTER_PEERS = 1024
 
 interface SegmentAssemblyState {
 	lastSequenceNumber: number | null
@@ -287,11 +284,18 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		}
 	>
 
-	/** Rolling invokeId counter per peer, keyed by peer key */
+	/** Rolling invokeId counter per link, keyed by link key */
 	private _invokeCounters?: Map<string, number>
 
-	/** InvokeIds reserved by pending confirmed requests, keyed by peer key */
+	/** InvokeIds reserved by pending confirmed requests toward any peer on
+	 * a link, keyed by link key */
 	private _activeInvokeIds?: Map<string, Set<number>>
+
+	/** Serial transaction queues for routed destinations, keyed by link key */
+	private _linkQueues?: Map<
+		string,
+		{ busy: boolean; waiting: Array<() => void> }
+	>
 
 	private _requestManager: RequestManager
 
@@ -364,97 +368,143 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 	}
 
 	/**
-	 * Allocates the next free invokeId for the given peer. ASHRAE 135 -
-	 * 5.4.4: the invokeId identifies a transaction only in combination with
-	 * the peer address, so each peer has its own rolling counter and the
-	 * same invokeId may be in flight to different peers concurrently.
-	 * InvokeIds still pending toward this peer are skipped; with all 256
-	 * ids pending the request is refused rather than queued.
+	 * Allocates the next free invokeId for the link the given receiver is
+	 * reached over. The rolling counter is LINK-scoped, not peer-scoped:
+	 * ids pending toward ANY peer on the link are skipped, so (link,
+	 * invokeId) is unique among pending requests. This is one half of the
+	 * correlation INVARIANT described in `getTransactionKey()` — responses
+	 * are correlated on (link, invokeId) alone, which is only safe because
+	 * of this allocation rule. With all 256 ids pending on a link the
+	 * request is refused rather than queued.
 	 */
 	private _getInvokeId(receiver?: BACNetAddress) {
-		const peerKey = getPeerKey(receiver)
+		const linkKey = getLinkKey(receiver)
 		const counters = this._getInvokeCounters()
-		const active = this._activeInvokeIds?.get(peerKey)
-		const start = counters.get(peerKey) ?? 0
+		const active = this._activeInvokeIds?.get(linkKey)
+		const start = counters.get(linkKey) ?? 0
 		for (let i = 0; i < 256; i++) {
 			const id = (start + i) & 0xff
 			if (!active?.has(id)) {
-				// Delete-before-set keeps Map insertion order as LRU order
-				counters.delete(peerKey)
-				counters.set(peerKey, (id + 1) & 0xff)
-				this._evictStaleInvokeCounters(counters)
+				counters.set(linkKey, (id + 1) & 0xff)
 				return id
 			}
 		}
 		throw new Error('ERR_MAX_CONCURRENT_REQUESTS')
 	}
 
-	/** Evicts least recently used counters of peers without pending
-	 * requests once the map exceeds MAX_INVOKE_COUNTER_PEERS. */
-	private _evictStaleInvokeCounters(counters: Map<string, number>): void {
-		if (counters.size <= MAX_INVOKE_COUNTER_PEERS) {
-			return
-		}
-		for (const staleKey of counters.keys()) {
-			if (counters.size <= MAX_INVOKE_COUNTER_PEERS) {
-				break
-			}
-			if (!this._activeInvokeIds?.has(staleKey)) {
-				counters.delete(staleKey)
-			}
-		}
-	}
-
 	/**
-	 * Reserves an invokeId toward one peer for the lifetime of a confirmed
+	 * Reserves an invokeId on one link for the lifetime of a confirmed
 	 * request, refusing reuse while a request with the same invokeId is
-	 * still pending toward that peer.
+	 * still pending toward any peer on that link.
 	 */
 	private _acquireInvokeId(
-		peerKey: string,
+		linkKey: string,
 		invokeId: number,
 		service: ConfirmedServiceChoice,
 	): void {
 		const activeIds = this._getActiveInvokeIds()
-		let active = activeIds.get(peerKey)
+		let active = activeIds.get(linkKey)
 		if (!active) {
 			active = new Set()
-			activeIds.set(peerKey, active)
+			activeIds.set(linkKey, active)
 		}
 		if (active.has(invokeId)) {
-			throw new InvokeIdInUseError({ peer: peerKey, invokeId, service })
+			throw new InvokeIdInUseError({ peer: linkKey, invokeId, service })
 		}
 		active.add(invokeId)
 	}
 
-	private _releaseInvokeId(peerKey: string, invokeId: number): void {
-		const active = this._activeInvokeIds?.get(peerKey)
+	private _releaseInvokeId(linkKey: string, invokeId: number): void {
+		const active = this._activeInvokeIds?.get(linkKey)
 		if (!active) return
 		active.delete(invokeId)
 		if (active.size === 0) {
-			this._activeInvokeIds.delete(peerKey)
+			this._activeInvokeIds.delete(linkKey)
+		}
+	}
+
+	private _getLinkQueues() {
+		if (!this._linkQueues) {
+			this._linkQueues = new Map()
+		}
+		return this._linkQueues
+	}
+
+	/**
+	 * Runs confirmed-request transactions toward one link strictly one at
+	 * a time, in FIFO order. Used for routed destinations (net/adr set):
+	 * MS/TP segments behind a router typically sustain only one
+	 * outstanding transaction, and serializing also keeps the shared
+	 * link-scoped invokeId space calm during scans. Direct peers bypass
+	 * this entirely and keep full concurrency.
+	 *
+	 * The slot is held until the entire transaction settles — for
+	 * segmented requests that includes every segment, the SegmentACK
+	 * exchange and the final service response. The apduTimeout of a queued
+	 * request is armed when it is actually sent (`RequestManager.add`
+	 * happens inside the task), not while waiting for the slot.
+	 */
+	private async _runSerializedOnLink<T>(
+		linkKey: string,
+		task: () => Promise<T>,
+	): Promise<T> {
+		const queues = this._getLinkQueues()
+		let state = queues.get(linkKey)
+		if (!state) {
+			state = { busy: false, waiting: [] }
+			queues.set(linkKey, state)
+		}
+		if (state.busy) {
+			await new Promise<void>((resolve) => state.waiting.push(resolve))
+		} else {
+			state.busy = true
+		}
+		try {
+			if (this._isClosed) {
+				throw new Error('ERR_CLOSED')
+			}
+			return await task()
+		} finally {
+			const next = state.waiting.shift()
+			if (next) {
+				// Hand the slot to the next waiter; busy stays true
+				next()
+			} else {
+				state.busy = false
+				if (queues.get(linkKey) === state) {
+					queues.delete(linkKey)
+				}
+			}
 		}
 	}
 
 	/**
-	 * Candidate transaction keys for correlating a response: the exact peer
-	 * key, then the unknown-peer key so confirmed requests that were
-	 * broadcast without a receiver address still correlate on invokeId
-	 * alone. Deliberately no partial fallback (such as stripping net/adr):
-	 * a reply from one device behind a router must never resolve a pending
-	 * request addressed to a different peer sharing the same link address.
-	 * A compliant reply carries SADR exactly when the request carried DADR,
-	 * so the exact key always matches legitimate traffic. This also keeps
-	 * response correlation consistent with the segment-transaction lookup,
-	 * which is exact-key only.
+	 * Candidate transaction keys for correlating a response, per the
+	 * (link, invokeId) INVARIANT in `getTransactionKey()`: both the sender
+	 * address and the forwarded originating address are tried as link
+	 * candidates (a device behind a BBMD may answer forwarded through the
+	 * BBMD or directly), followed by the unknown-peer key so confirmed
+	 * requests that were broadcast without a receiver address still
+	 * correlate on invokeId alone. The routed net/adr of the sender is
+	 * deliberately ignored — link-scoped allocation guarantees at most one
+	 * pending request per (link, invokeId).
 	 */
 	private _responseKeyCandidates(
 		header: BACnetMessageHeader | undefined,
 		invokeId: number,
 	): string[] {
-		const keys = [getTransactionKey(header?.sender, invokeId)]
-		const unknownKey = getTransactionKey(undefined, invokeId)
-		if (!keys.includes(unknownKey)) keys.push(unknownKey)
+		const keys: string[] = []
+		const push = (key: string) => {
+			if (!keys.includes(key)) keys.push(key)
+		}
+		const sender = header?.sender
+		const addressLink = normalizeAddress(sender?.address)
+		if (addressLink) push(`${addressLink}#${invokeId}`)
+		if (sender?.forwardedFrom) {
+			const forwardedLink = normalizeAddress(sender.forwardedFrom)
+			if (forwardedLink) push(`${forwardedLink}#${invokeId}`)
+		}
+		push(`${UNKNOWN_PEER_KEY}#${invokeId}`)
 		return keys
 	}
 
@@ -535,10 +585,15 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		msg: SegmentableMessage,
 		server: boolean,
 	): string {
-		return `${server ? 'srv' : 'cli'}|${getTransactionKey(
-			msg.header?.sender,
-			msg.invokeId,
-		)}`
+		// Server role: requests FROM remote peers always traverse the
+		// router and carry SADR, and two devices behind one router may
+		// legitimately use the same invokeId toward us — key by full peer.
+		// Client role: responses to OUR requests may lack SADR, and (link,
+		// invokeId) is unique among pending requests — key by link.
+		if (server) {
+			return `srv|${getPeerKey(msg.header?.sender)}#${msg.invokeId}`
+		}
+		return `cli|${getTransactionKey(msg.header?.sender, msg.invokeId)}`
 	}
 
 	private _getOutgoingSegmentTransactions() {
@@ -565,15 +620,23 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		segmentedRequest?: SegmentedRequestOptions
 		encodePayload: (buffer: EncodeBuffer) => void
 	}): Promise<NetworkOpResult> {
-		// Reserve the invokeId toward this peer for the lifetime of the
-		// request so it cannot be reused while still pending, while the
-		// same invokeId stays available toward other peers.
-		const peerKey = getPeerKey(args.receiver)
-		this._acquireInvokeId(peerKey, args.invokeId, args.service)
+		// Reserve the invokeId on this link for the lifetime of the request
+		// so it cannot be reused toward any peer on the link while pending;
+		// the same invokeId stays available on other links. Reservation
+		// happens before queueing so allocation skips queued ids too.
+		const linkKey = getLinkKey(args.receiver)
+		this._acquireInvokeId(linkKey, args.invokeId, args.service)
 		try {
+			if (isRoutedPeer(args.receiver)) {
+				// Routed destinations share one serial transaction slot per
+				// link; direct peers keep full concurrency.
+				return await this._runSerializedOnLink(linkKey, () =>
+					this._dispatchConfirmedRequest(args),
+				)
+			}
 			return await this._dispatchConfirmedRequest(args)
 		} finally {
-			this._releaseInvokeId(peerKey, args.invokeId)
+			this._releaseInvokeId(linkKey, args.invokeId)
 		}
 	}
 
@@ -1097,8 +1160,13 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		if (!this._outgoingSegmentTransactions?.size) {
 			return undefined
 		}
-		const key = getTransactionKey(header?.sender, invokeId)
-		return this._outgoingSegmentTransactions.get(key)
+		// Same link candidates as response correlation: SegmentACKs from
+		// routed peers may also arrive without SADR.
+		for (const key of this._responseKeyCandidates(header, invokeId)) {
+			const state = this._outgoingSegmentTransactions.get(key)
+			if (state) return state
+		}
+		return undefined
 	}
 
 	/**

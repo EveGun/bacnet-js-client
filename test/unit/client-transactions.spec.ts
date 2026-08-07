@@ -157,7 +157,9 @@ function injectComplexAckSegment(
 	})
 }
 
-test.describe('bacnet - per-peer transaction correlation', () => {
+const tick = () => new Promise<void>((resolve) => setImmediate(resolve))
+
+test.describe('bacnet - link-scoped transaction correlation', () => {
 	test('the same invokeId can be pending toward two IP devices concurrently', async () => {
 		const { client, sent } = createStubClient()
 		const promiseA = sendRequest(client, { address: DEVICE_A }, 5)
@@ -182,11 +184,11 @@ test.describe('bacnet - per-peer transaction correlation', () => {
 		assert.strictEqual(resolvedA, true)
 	})
 
-	test('invokeIds are allocated independently per peer', () => {
+	test('invokeIds are allocated independently per link', () => {
 		const { client } = createStubClient()
 		assert.strictEqual(client._getInvokeId({ address: DEVICE_A }), 0)
 		assert.strictEqual(client._getInvokeId({ address: DEVICE_A }), 1)
-		// A different peer starts from its own counter
+		// A different link starts from its own counter
 		assert.strictEqual(client._getInvokeId({ address: DEVICE_B }), 0)
 		// Address normalization: same peer with and without default port
 		assert.strictEqual(client._getInvokeId({ address: '192.168.1.50' }), 2)
@@ -237,7 +239,7 @@ test.describe('bacnet - per-peer transaction correlation', () => {
 		await pending
 	})
 
-	test('at most 256 concurrent requests per peer, without limiting other peers', async () => {
+	test('at most 256 concurrent requests per link, without limiting other links', async () => {
 		const { client, sent } = createStubClient()
 		const receiverA = { address: DEVICE_A }
 		const promises: Array<Promise<any>> = []
@@ -268,27 +270,6 @@ test.describe('bacnet - per-peer transaction correlation', () => {
 
 		// All 256 invokeIds are available again
 		assert.strictEqual(client._getInvokeId(receiverA), 0)
-	})
-
-	test('routed devices behind the same router IP with different net/adr stay isolated', async () => {
-		const { client, sent } = createStubClient()
-		const router = '10.0.0.1:47808'
-		const devA: BACNetAddress = { address: router, net: 100, adr: [1] }
-		const devB: BACNetAddress = { address: router, net: 100, adr: [2] }
-		const promiseA = sendRequest(client, devA, 1)
-		const promiseB = sendRequest(client, devB, 1)
-		assert.strictEqual(sent.length, 2)
-
-		let resolvedB = false
-		promiseB.then(() => (resolvedB = true))
-
-		// Response NPDUs carry the routed source as sender.net/adr
-		injectSimpleAck(client, 1, { address: router, net: 100, adr: [2] })
-		await promiseB
-		assert.strictEqual(resolvedB, true)
-
-		injectError(client, 1, { address: router, net: 100, adr: [1] })
-		await assert.rejects(promiseA, /BacnetError - Class:2 - Code:37/)
 	})
 
 	test('devices behind the same BBMD with different forwardedFrom stay isolated', async () => {
@@ -399,46 +380,6 @@ test.describe('bacnet - per-peer transaction correlation', () => {
 		assert.strictEqual(result.values[0].values[0].value[0].value, 1)
 	})
 
-	test('a routed reply with SADR never resolves a request addressed to the router link alone', async () => {
-		// A compliant reply carries SADR exactly when the request carried
-		// DADR, so a routed reply hitting a link-only request would be
-		// stale or misdirected traffic; resolving it would silently hand
-		// data from one device to a request meant for another.
-		const { client } = createStubClient()
-		const router = '10.0.0.1:47808'
-		const promise = sendRequest(client, { address: router }, 6)
-		let resolved = false
-		promise.then(() => (resolved = true))
-
-		injectSimpleAck(client, 6, { address: router, net: 100, adr: [7] })
-		await Promise.resolve()
-		assert.strictEqual(resolved, false)
-
-		// The router's own application replies without SADR and matches
-		injectSimpleAck(client, 6, { address: router })
-		await promise
-	})
-
-	test('invokeId counters are bounded with LRU eviction of idle peers', () => {
-		const { client } = createStubClient()
-		// Advance peer A's counter, then touch enough other peers to
-		// overflow the bound; A stays because it was recently reused.
-		client._getInvokeId({ address: '10.0.0.1' })
-		client._getInvokeId({ address: '10.0.0.1' })
-		for (let i = 0; i < 1023; i++) {
-			client._getInvokeId({ address: `10.1.${i >> 8}.${i & 0xff}` })
-		}
-		client._getInvokeId({ address: '10.0.0.1' })
-		for (let i = 0; i < 100; i++) {
-			client._getInvokeId({ address: `10.2.0.${i}` })
-		}
-		assert.ok(client._invokeCounters.size <= 1024)
-		// A's counter survived eviction and continues where it left off
-		assert.strictEqual(client._getInvokeId({ address: '10.0.0.1' }), 3)
-		// The oldest untouched peer was evicted and restarts at 0
-		assert.strictEqual(client._getInvokeId({ address: '10.1.0.0' }), 0)
-	})
-
 	test('a confirmed request without receiver address still correlates on invokeId alone', async () => {
 		const { client } = createStubClient()
 		const promise = sendRequest(client, {}, 9)
@@ -500,5 +441,141 @@ test.describe('bacnet - per-peer transaction correlation', () => {
 		)
 		assert.strictEqual(client._outgoingSegmentTransactions.size, 0)
 		assert.strictEqual(client._segmentAssemblyStates.size, 0)
+	})
+	test('INVARIANT: link-scoped allocation is what makes (link, invokeId) correlation safe', async () => {
+		const { client, sent } = createStubClient()
+		const router = '10.0.0.1:47808'
+		const devA: BACNetAddress = { address: router, net: 100, adr: [1] }
+		const devB: BACNetAddress = { address: router, net: 100, adr: [2] }
+
+		// Allocation half: the rolling counter is shared by every peer on
+		// the link, so ids never collide across devices behind the router.
+		const idA = client._getInvokeId(devA)
+		const promiseA = sendRequest(client, devA, idA)
+		const idB = client._getInvokeId(devB)
+		assert.notStrictEqual(idA, idB)
+		// Explicitly reusing a pending id toward ANOTHER peer on the same
+		// link is refused before anything is sent or queued.
+		await assert.rejects(sendRequest(client, devB, idA), InvokeIdInUseError)
+
+		// Correlation half: replies are matched on (link, invokeId) alone,
+		// so an MS/TP gateway answering WITHOUT an NPDU SADR still resolves
+		// the right request.
+		const promiseB = sendRequest(client, devB, idB)
+		await tick()
+		// Routed destinations are serialized: B is not on the wire yet
+		assert.strictEqual(sent.length, 1)
+		injectSimpleAck(client, idA, { address: router })
+		await promiseA
+		await tick()
+		assert.strictEqual(sent.length, 2)
+		// A reply carrying SADR correlates identically (net/adr ignored)
+		injectSimpleAck(client, idB, { address: router, net: 100, adr: [2] })
+		await promiseB
+	})
+
+	test('scan pattern: bursts toward two devices behind one link serialize and correlate without SADR', async () => {
+		const { client, sent } = createStubClient()
+		const router = '10.0.0.9:47808'
+		const devA: BACNetAddress = { address: router, net: 5, adr: [1] }
+		const devB: BACNetAddress = { address: router, net: 5, adr: [2] }
+
+		const ids: number[] = []
+		const promises: Array<Promise<any>> = []
+		for (let i = 0; i < 4; i++) {
+			const id = client._getInvokeId(devA)
+			ids.push(id)
+			promises.push(sendRequest(client, devA, id))
+		}
+		for (let i = 0; i < 4; i++) {
+			const id = client._getInvokeId(devB)
+			ids.push(id)
+			promises.push(sendRequest(client, devB, id))
+		}
+		// One shared id space per link across both bursts
+		assert.deepStrictEqual(ids, [0, 1, 2, 3, 4, 5, 6, 7])
+
+		for (let i = 0; i < 8; i++) {
+			await tick()
+			// Strictly one outstanding transaction on the link at a time
+			assert.strictEqual(sent.length, i + 1)
+			// The MS/TP gateway answers without SADR every time
+			injectSimpleAck(client, ids[i], { address: router })
+			await promises[i]
+		}
+		await tick()
+		assert.strictEqual(sent.length, 8)
+	})
+
+	test('a queued request arms its apduTimeout at send, not at enqueue', async () => {
+		const { client, sent } = createStubClient({ apduTimeout: 150 })
+		const router = '10.0.0.2:47808'
+		const promiseA = sendRequest(
+			client,
+			{ address: router, net: 7, adr: [1] },
+			0,
+		)
+		const promiseB = sendRequest(
+			client,
+			{ address: router, net: 7, adr: [2] },
+			1,
+		)
+		assert.strictEqual(sent.length, 1)
+
+		// A is never answered and consumes its full apduTimeout first
+		await assert.rejects(promiseA, /ERR_TIMEOUT/)
+		await tick()
+		// B goes on the wire only now, well after its enqueue time...
+		assert.strictEqual(sent.length, 2)
+		// ...and still has its whole apduTimeout window left
+		injectSimpleAck(client, 1, { address: router })
+		await promiseB
+	})
+
+	test('a segmented transaction holds the link slot until the final response', async () => {
+		const { client, sent } = createStubClient()
+		const router = '10.0.0.3:47808'
+		const devA: BACNetAddress = { address: router, net: 9, adr: [1] }
+		const devB: BACNetAddress = { address: router, net: 9, adr: [2] }
+		const promiseA = sendRequest(client, devA, 1, {
+			enabled: true,
+			remoteMaxApduLength: 12,
+		})
+		const promiseB = sendRequest(client, devB, 2)
+		await tick()
+		// Only A's first segment is out; B waits for the whole transaction
+		assert.strictEqual(sent.length, 1)
+
+		// SegmentACKs from the gateway arrive without SADR
+		injectSegmentAck(client, 1, 0, 1, { address: router })
+		await tick()
+		assert.strictEqual(sent.length, 2)
+		injectSegmentAck(client, 1, 1, 1, { address: router })
+		await tick()
+		// Transfer phase done, final response still outstanding: B queued
+		assert.strictEqual(sent.length, 2)
+
+		injectSimpleAck(client, 1, { address: router })
+		await promiseA
+		await tick()
+		assert.strictEqual(sent.length, 3)
+		injectSimpleAck(client, 2, { address: router })
+		await promiseB
+	})
+
+	test('a device behind a BBMD may answer forwarded or directly', async () => {
+		const { client } = createStubClient()
+		const bbmd = '10.0.0.1:47808'
+		const device = '10.0.0.7'
+		const receiver: BACNetAddress = { address: bbmd, forwardedFrom: device }
+
+		const forwarded = sendRequest(client, receiver, 3)
+		injectSimpleAck(client, 3, { address: bbmd, forwardedFrom: device })
+		await forwarded
+
+		const direct = sendRequest(client, receiver, 4)
+		// The device answers with a plain unicast from its own address
+		injectSimpleAck(client, 4, { address: `${device}:47808` })
+		await direct
 	})
 })
