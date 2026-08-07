@@ -366,6 +366,39 @@ test.describe('bacnet - per-peer transaction correlation', () => {
 		await Promise.all([promiseA, promiseB])
 	})
 
+	test('byte-exact routed exchange from field capture correlates (DNET/DADR out, SNET/SADR back)', async () => {
+		// Wireshark capture 2026-08-07: readPropertyMultiple invokeId 16 to
+		// multi-state-value,16 behind router 192.168.40.15 (DNET 1, DADR
+		// 80:00:00:0b:01:10); the reply carries the matching SNET/SADR.
+		const { client } = createStubClient()
+		const receiver: BACNetAddress = {
+			address: '192.168.40.15:47808',
+			net: 1,
+			adr: [0x80, 0x00, 0x00, 0x0b, 0x01, 0x10],
+		}
+		const promise = (client as any).readPropertyMultiple(
+			receiver,
+			[
+				{
+					objectId: { type: 19, instance: 16 },
+					properties: [{ id: 85 }],
+				},
+			],
+			{ invokeId: 16 },
+		)
+		// BVLC/NPDU/APDU of the captured ComplexACK, verbatim
+		const reply = Buffer.from(
+			'810a001f01080001068000000b011030100e0c04c000101e29554e21014f1f',
+			'hex',
+		)
+		// The transport strips the default port from the remote address
+		;(client as any)._receiveData(reply, '192.168.40.15')
+
+		const result = await promise
+		assert.strictEqual(result.values[0].objectId.instance, 16)
+		assert.strictEqual(result.values[0].values[0].value[0].value, 1)
+	})
+
 	test('a routed reply with SADR correlates with a request addressed by router IP alone', async () => {
 		const { client } = createStubClient()
 		const router = '10.0.0.1:47808'
