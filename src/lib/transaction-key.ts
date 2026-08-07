@@ -52,21 +52,40 @@ export function normalizeAddress(
 }
 
 /**
- * Builds the identity key of a BACnet peer for transaction correlation.
- *
- * ASHRAE 135 - 5.4: a Transaction State Machine instance is identified by
- * the peer BACnet address together with the invoke ID, so the key includes
- * every component that distinguishes one peer from another sharing the
- * same link-level address:
- *
- * - `address`   — the BACnet/IP address the datagram is exchanged with
- * - `forwardedFrom` — the originating device behind a BBMD (Annex J
- *   Forwarded-NPDU), distinguishing devices reached through the same BBMD
- * - `net`/`adr` — the routed network number and MAC (NPDU DADR/SADR),
- *   distinguishing devices behind the same router
- *
- * `distributeBroadcastToNetwork` and `type` are delivery options rather
- * than identity and are deliberately excluded.
+ * True when the destination carries a routed network address that is
+ * actually encoded on the wire (npdu.encode only emits DADR for net > 0;
+ * 0xffff is the global broadcast network and never a specific peer).
+ */
+export function isRoutedPeer(peer?: BACNetAddress | null): boolean {
+	return typeof peer?.net === 'number' && peer.net > 0 && peer.net !== 0xffff
+}
+
+/**
+ * Identity of the BACnet/IP link a datagram for this peer is exchanged
+ * over: the normalized `ip:port` endpoint. For devices behind a BBMD the
+ * originating address (`forwardedFrom`) is the link — replies may arrive
+ * either forwarded through the BBMD or directly from the device, and
+ * response correlation tries both the sender address and the forwarded
+ * address as link candidates. The routed net/adr component is deliberately
+ * NOT part of the link: many MS/TP gateways answer without an NPDU SADR,
+ * so replies from routed devices can only be correlated at link level.
+ */
+export function getLinkKey(peer?: BACNetAddress | null): string {
+	if (!peer) return UNKNOWN_PEER_KEY
+	if (peer.forwardedFrom) {
+		const forwarded = normalizeAddress(peer.forwardedFrom)
+		if (forwarded) return forwarded
+	}
+	return normalizeAddress(peer.address) ?? UNKNOWN_PEER_KEY
+}
+
+/**
+ * Builds the full identity key of a BACnet peer, including the routed
+ * net/adr component. Used for server-role segment reassembly, where two
+ * devices behind one router may legitimately use the same invokeId in
+ * requests toward us and their SADR is always present. Client-side
+ * transaction state is keyed by `getTransactionKey()` (link + invokeId)
+ * instead — see the INVARIANT note there.
  */
 export function getPeerKey(peer?: BACNetAddress | null): string {
 	if (!peer) return UNKNOWN_PEER_KEY
@@ -77,23 +96,30 @@ export function getPeerKey(peer?: BACNetAddress | null): string {
 	// Mirror the wire semantics of npdu.encode: a routed destination is only
 	// encoded when net > 0, so NET 0 (local network), null/undefined and
 	// 0xffff (global broadcast, never a source address) carry no routed
-	// component and must all map to the same peer identity. Consumers
-	// commonly pass `net: 0` or `net: null` for local devices; replies then
-	// arrive without an NPDU SADR and both sides must produce the same key.
-	if (typeof peer.net === 'number' && peer.net > 0 && peer.net !== 0xffff) {
+	// component and must all map to the same peer identity.
+	if (isRoutedPeer(peer)) {
 		key += `|net=${peer.net}|adr=${(peer.adr ?? []).join(',')}`
 	}
 	return key
 }
 
 /**
- * Builds the key identifying one confirmed transaction: the peer identity
- * plus the 8-bit invoke ID. The same invoke ID may be active concurrently
- * toward different peers; toward the same peer it must be unique.
+ * Builds the key identifying one of OUR confirmed transactions: the link
+ * plus the 8-bit invoke ID.
+ *
+ * INVARIANT: correlating responses on (link, invokeId) alone — without the
+ * routed net/adr — is only safe because invokeId ALLOCATION is also
+ * link-scoped (`BACnetClient._getInvokeId` skips ids pending toward any
+ * peer on the link), which guarantees that (link, invokeId) is unique
+ * among pending requests. Field reality forces this: MS/TP gateways that
+ * proxy devices often reply without an NPDU SADR, so a reply cannot be
+ * attributed to a specific routed peer — only to the link. Allocation and
+ * correlation must therefore stay coupled; never change one without the
+ * other. The coupling is locked by tests in client-transactions.spec.ts.
  */
 export function getTransactionKey(
 	peer: BACNetAddress | null | undefined,
 	invokeId: number,
 ): string {
-	return `${getPeerKey(peer)}#${invokeId}`
+	return `${getLinkKey(peer)}#${invokeId}`
 }
