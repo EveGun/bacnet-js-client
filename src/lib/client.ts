@@ -159,6 +159,12 @@ const MAX_SEGMENT_WINDOW_SIZE = 127
 const DEFAULT_SEGMENT_MAX_RETRIES = 3
 // Scratch buffer for encoding a segmented service payload before splitting.
 const OUTGOING_SEGMENT_PAYLOAD_BUFFER_LENGTH = 1 << 20
+// Upper bound on remembered per-peer invokeId counters. Counters for the
+// least recently used peers without pending requests are evicted beyond
+// this, so long-lived clients scanning many transient peers do not grow
+// without bound. Losing a counter is harmless: allocation restarts at 0
+// and pending invokeIds are tracked separately in _activeInvokeIds.
+const MAX_INVOKE_COUNTER_PEERS = 1024
 
 interface SegmentAssemblyState {
 	lastSequenceNumber: number | null
@@ -373,11 +379,30 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		for (let i = 0; i < 256; i++) {
 			const id = (start + i) & 0xff
 			if (!active?.has(id)) {
+				// Delete-before-set keeps Map insertion order as LRU order
+				counters.delete(peerKey)
 				counters.set(peerKey, (id + 1) & 0xff)
+				this._evictStaleInvokeCounters(counters)
 				return id
 			}
 		}
 		throw new Error('ERR_MAX_CONCURRENT_REQUESTS')
+	}
+
+	/** Evicts least recently used counters of peers without pending
+	 * requests once the map exceeds MAX_INVOKE_COUNTER_PEERS. */
+	private _evictStaleInvokeCounters(counters: Map<string, number>): void {
+		if (counters.size <= MAX_INVOKE_COUNTER_PEERS) {
+			return
+		}
+		for (const staleKey of counters.keys()) {
+			if (counters.size <= MAX_INVOKE_COUNTER_PEERS) {
+				break
+			}
+			if (!this._activeInvokeIds?.has(staleKey)) {
+				counters.delete(staleKey)
+			}
+		}
 	}
 
 	/**
@@ -412,28 +437,22 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 	}
 
 	/**
-	 * Candidate transaction keys for correlating a response, most specific
-	 * first: the exact peer key, the link-level key without the routed
-	 * net/adr component (a request addressed to the router IP alone must
-	 * still match a reply carrying the device's SADR), and the unknown-peer
-	 * key so confirmed requests that were broadcast without a receiver
-	 * address still correlate on invokeId alone.
+	 * Candidate transaction keys for correlating a response: the exact peer
+	 * key, then the unknown-peer key so confirmed requests that were
+	 * broadcast without a receiver address still correlate on invokeId
+	 * alone. Deliberately no partial fallback (such as stripping net/adr):
+	 * a reply from one device behind a router must never resolve a pending
+	 * request addressed to a different peer sharing the same link address.
+	 * A compliant reply carries SADR exactly when the request carried DADR,
+	 * so the exact key always matches legitimate traffic. This also keeps
+	 * response correlation consistent with the segment-transaction lookup,
+	 * which is exact-key only.
 	 */
 	private _responseKeyCandidates(
 		header: BACnetMessageHeader | undefined,
 		invokeId: number,
 	): string[] {
 		const keys = [getTransactionKey(header?.sender, invokeId)]
-		if (header?.sender) {
-			const linkKey = getTransactionKey(
-				{
-					address: header.sender.address,
-					forwardedFrom: header.sender.forwardedFrom,
-				},
-				invokeId,
-			)
-			if (!keys.includes(linkKey)) keys.push(linkKey)
-		}
 		const unknownKey = getTransactionKey(undefined, invokeId)
 		if (!keys.includes(unknownKey)) keys.push(unknownKey)
 		return keys
