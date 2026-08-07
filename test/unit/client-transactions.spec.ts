@@ -563,6 +563,42 @@ test.describe('bacnet - link-scoped transaction correlation', () => {
 		await promiseB
 	})
 
+	test('a segmented SADR-less ComplexACK resolves a routed request', async () => {
+		// The MS/TP gateway streams a segmented response without any NPDU
+		// SADR; client-role reassembly and final correlation both run on
+		// (link, invokeId) and must still hit the routed request.
+		const { client, sent } = createStubClient()
+		const router = '10.0.0.4:47808'
+		const devA: BACNetAddress = { address: router, net: 3, adr: [1] }
+		const devB: BACNetAddress = { address: router, net: 3, adr: [2] }
+		const promiseA = sendRequest(client, devA, 1)
+		const promiseB = sendRequest(client, devB, 2)
+		await tick()
+		assert.strictEqual(sent.length, 1)
+
+		injectComplexAckSegment(client, 1, 0, true, 0xaa, { address: router })
+		injectComplexAckSegment(client, 1, 1, false, 0xbb, { address: router })
+		const dataA = await promiseA
+		assert.deepStrictEqual(
+			Buffer.from(
+				dataA.buffer.subarray(
+					dataA.offset,
+					dataA.offset + dataA.length,
+				),
+			),
+			Buffer.from([0xaa, 0xbb]),
+		)
+		assert.strictEqual(client._segmentAssemblyStates.size, 0)
+
+		// sent: request A, our two SegmentACKs for the response segments,
+		// then request B — which only left the queue after the whole
+		// reassembly resolved A's transaction
+		await tick()
+		assert.strictEqual(sent.length, 4)
+		injectSimpleAck(client, 2, { address: router })
+		await promiseB
+	})
+
 	test('a device behind a BBMD may answer forwarded or directly', async () => {
 		const { client } = createStubClient()
 		const bbmd = '10.0.0.1:47808'

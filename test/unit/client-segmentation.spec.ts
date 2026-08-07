@@ -864,6 +864,8 @@ test.describe('bacnet - incoming segmentation hardening', () => {
 		moreFollows: boolean
 		sender?: string
 		service?: number
+		net?: number
+		adr?: number[]
 	}) =>
 		({
 			type:
@@ -877,7 +879,11 @@ test.describe('bacnet - incoming segmentation hardening', () => {
 			header: {
 				apduType:
 					PduType.CONFIRMED_REQUEST | PduConReqBit.SEGMENTED_MESSAGE,
-				sender: { address: options.sender ?? DEVICE },
+				sender: {
+					address: options.sender ?? DEVICE,
+					net: options.net,
+					adr: options.adr,
+				},
 				expectingReply: true,
 				confirmedService: true,
 			},
@@ -1018,6 +1024,41 @@ test.describe('bacnet - incoming segmentation hardening', () => {
 		)
 		assert.strictEqual(client._segmentAssemblyStates.size, 1)
 		await sleep(80)
+		assert.strictEqual(client._segmentAssemblyStates.size, 0)
+	})
+
+	test('server role: assemblies from two routed devices behind one link with the same invokeId stay isolated', () => {
+		// Requests FROM routed devices always carry SADR, and their TSMs
+		// are per-peer, so the same invokeId from two devices behind one
+		// router link is legitimate. Server-role reassembly is keyed by
+		// the full peer (incl. net/adr), unlike our own client-role
+		// transactions which are link-scoped.
+		const { client } = createStubClient()
+		let negativeAcks = 0
+		client._segmentAckResponse = (_receiver: any, negative: boolean) => {
+			if (negative) negativeAcks++
+		}
+		client._performDefaultSegmentHandling = () => {}
+
+		for (let seq = 0; seq <= 2; seq++) {
+			for (const adr of [[1], [2]]) {
+				client._processSegment(
+					makeSegmentMsg({
+						invokeId: 9,
+						sequencenumber: seq,
+						window: 1,
+						moreFollows: seq < 2,
+						net: 5,
+						adr,
+					}),
+					true,
+					Buffer.alloc(1),
+					0,
+					1,
+				)
+			}
+		}
+		assert.strictEqual(negativeAcks, 0)
 		assert.strictEqual(client._segmentAssemblyStates.size, 0)
 	})
 
