@@ -57,7 +57,7 @@ test.describe('bacnet - client', () => {
 
 	test('getEventInformation should omit optional objectId when not provided', async () => {
 		const client = Object.create(BACnetClient.prototype) as BACnetClient & {
-			_requestManager: { add: (invokeId: number) => Promise<any> }
+			_requestManager: { add: (key: string) => Promise<any> }
 			_getInvokeId: () => number
 			_getApduBuffer: () => { buffer: Buffer; offset: number }
 			sendBvlc: (
@@ -106,8 +106,8 @@ test.describe('bacnet - client', () => {
 			sentRequest = Buffer.from(buffer.buffer.subarray(0, buffer.offset))
 		}
 		client._requestManager = {
-			add: async (invokeId: number) => {
-				assert.strictEqual(invokeId, 7)
+			add: async (key: string) => {
+				assert.strictEqual(key, '127.0.0.1:47808#7')
 				return {
 					buffer: response.buffer,
 					offset: 0,
@@ -134,7 +134,7 @@ test.describe('bacnet - client', () => {
 
 	test('getEventInformation should request additional pages when moreEvents is true', async () => {
 		const client = Object.create(BACnetClient.prototype) as BACnetClient & {
-			_requestManager: { add: (invokeId: number) => Promise<any> }
+			_requestManager: { add: (key: string) => Promise<any> }
 			_getInvokeId: () => number
 			_getApduBuffer: () => { buffer: Buffer; offset: number }
 			sendBvlc: (
@@ -306,10 +306,10 @@ test.describe('bacnet - client', () => {
 		const client = Object.create(BACnetClient.prototype) as BACnetClient & {
 			_requestManager: {
 				resolve: (
-					invokeId: number,
+					key: string,
 					err: Error | null,
 					result?: { offset: number; length: number; buffer: Buffer },
-				) => void
+				) => boolean
 			}
 			_handlePdu: (
 				buffer: Buffer,
@@ -325,15 +325,16 @@ test.describe('bacnet - client', () => {
 		}
 
 		let resolved:
-			| { invokeId: number; offset: number; length: number }
+			| { key: string; offset: number; length: number }
 			| undefined
 		client._requestManager = {
-			resolve: (invokeId, _err, result) => {
+			resolve: (key, _err, result) => {
 				resolved = {
-					invokeId,
+					key,
 					offset: result?.offset ?? -1,
 					length: result?.length ?? -1,
 				}
+				return true
 			},
 		}
 
@@ -351,7 +352,7 @@ test.describe('bacnet - client', () => {
 		})
 
 		assert.ok(resolved)
-		assert.equal(resolved.invokeId, 7)
+		assert.equal(resolved.key, '127.0.0.1:47808#7')
 		assert.equal(resolved.offset, 3)
 		assert.equal(resolved.length, 2)
 	})

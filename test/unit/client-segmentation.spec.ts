@@ -26,6 +26,7 @@ import {
 import {
 	ApduTooLargeError,
 	InvalidSegmentedRequestError,
+	InvokeIdInUseError,
 	SegmentAckTimeoutError,
 	SegmentCountExceededError,
 } from '../../src/lib/errors'
@@ -87,7 +88,12 @@ function injectSegmentAck(
 	invokeId: number,
 	sequencenumber: number,
 	actualWindowSize: number,
-	opts: { negative?: boolean; server?: boolean; sender?: string } = {},
+	opts: {
+		negative?: boolean
+		server?: boolean
+		sender?: string
+		forwardedFrom?: string
+	} = {},
 ) {
 	const type =
 		PduType.SEGMENT_ACK |
@@ -104,7 +110,10 @@ function injectSegmentAck(
 	)
 	client._handlePdu(buffer, 0, apdu.offset, {
 		apduType: type,
-		sender: { address: opts.sender ?? DEVICE },
+		sender: {
+			address: opts.sender ?? DEVICE,
+			forwardedFrom: opts.forwardedFrom,
+		},
 		expectingReply: false,
 		confirmedService: false,
 	})
@@ -113,7 +122,7 @@ function injectSegmentAck(
 function injectSimpleAck(
 	client: any,
 	invokeId: number,
-	opts: { sender?: string; service?: number } = {},
+	opts: { sender?: string; service?: number; forwardedFrom?: string } = {},
 ) {
 	const buffer = Buffer.alloc(8)
 	const apdu = { buffer, offset: 0 }
@@ -125,7 +134,10 @@ function injectSimpleAck(
 	)
 	client._handlePdu(buffer, 0, apdu.offset, {
 		apduType: PduType.SIMPLE_ACK,
-		sender: { address: opts.sender ?? DEVICE },
+		sender: {
+			address: opts.sender ?? DEVICE,
+			forwardedFrom: opts.forwardedFrom,
+		},
 		expectingReply: false,
 		confirmedService: false,
 	})
@@ -578,9 +590,10 @@ test.describe('bacnet - outgoing request segmentation', () => {
 		})
 		// Let the first SegmentACK time out once to cover retransmission
 		await sleep(45)
-		injectSegmentAck(client, 1, 0, 1)
-		injectSegmentAck(client, 1, 1, 1)
-		injectSimpleAck(client, 1)
+		const forwardedFrom = '10.0.0.5:47808'
+		injectSegmentAck(client, 1, 0, 1, { forwardedFrom })
+		injectSegmentAck(client, 1, 1, 1, { forwardedFrom })
+		injectSimpleAck(client, 1, { forwardedFrom })
 		await promise
 
 		assert.ok(sent.length >= 3)
@@ -690,9 +703,9 @@ test.describe('bacnet - outgoing request segmentation', () => {
 				payloadLength: 10,
 				segmentedRequest: { enabled: true, remoteMaxApduLength: 12 },
 			}),
-			(err: InvalidSegmentedRequestError) => {
-				assert.ok(err instanceof InvalidSegmentedRequestError)
-				assert.strictEqual(err.option, 'invokeId')
+			(err: InvokeIdInUseError) => {
+				assert.ok(err instanceof InvokeIdInUseError)
+				assert.strictEqual(err.invokeId, 1)
 				return true
 			},
 		)
