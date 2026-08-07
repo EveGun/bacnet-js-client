@@ -74,7 +74,13 @@ export function getPeerKey(peer?: BACNetAddress | null): string {
 	if (peer.forwardedFrom) {
 		key += `|fwd=${normalizeAddress(peer.forwardedFrom) ?? peer.forwardedFrom}`
 	}
-	if (peer.net !== undefined) {
+	// Mirror the wire semantics of npdu.encode: a routed destination is only
+	// encoded when net > 0, so NET 0 (local network), null/undefined and
+	// 0xffff (global broadcast, never a source address) carry no routed
+	// component and must all map to the same peer identity. Consumers
+	// commonly pass `net: 0` or `net: null` for local devices; replies then
+	// arrive without an NPDU SADR and both sides must produce the same key.
+	if (typeof peer.net === 'number' && peer.net > 0 && peer.net !== 0xffff) {
 		key += `|net=${peer.net}|adr=${(peer.adr ?? []).join(',')}`
 	}
 	return key

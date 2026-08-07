@@ -412,10 +412,36 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 	}
 
 	/**
+	 * Candidate transaction keys for correlating a response, most specific
+	 * first: the exact peer key, the link-level key without the routed
+	 * net/adr component (a request addressed to the router IP alone must
+	 * still match a reply carrying the device's SADR), and the unknown-peer
+	 * key so confirmed requests that were broadcast without a receiver
+	 * address still correlate on invokeId alone.
+	 */
+	private _responseKeyCandidates(
+		header: BACnetMessageHeader | undefined,
+		invokeId: number,
+	): string[] {
+		const keys = [getTransactionKey(header?.sender, invokeId)]
+		if (header?.sender) {
+			const linkKey = getTransactionKey(
+				{
+					address: header.sender.address,
+					forwardedFrom: header.sender.forwardedFrom,
+				},
+				invokeId,
+			)
+			if (!keys.includes(linkKey)) keys.push(linkKey)
+		}
+		const unknownKey = getTransactionKey(undefined, invokeId)
+		if (!keys.includes(unknownKey)) keys.push(unknownKey)
+		return keys
+	}
+
+	/**
 	 * Resolves the pending request identified by the responding peer and
-	 * invokeId. Falls back to the unknown-peer key so confirmed requests
-	 * that were broadcast without a receiver address still correlate on
-	 * invokeId alone.
+	 * invokeId, trying `_responseKeyCandidates()` most specific first.
 	 */
 	private _resolvePendingRequest(
 		header: BACnetMessageHeader | undefined,
@@ -423,9 +449,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		err: Error | null,
 		result?: NetworkOpResult,
 	): boolean {
-		const key = getTransactionKey(header?.sender, invokeId)
-		const fallback = getTransactionKey(undefined, invokeId)
-		for (const candidate of key === fallback ? [key] : [key, fallback]) {
+		for (const candidate of this._responseKeyCandidates(header, invokeId)) {
 			const resolved = err
 				? this._requestManager.resolve(candidate, err)
 				: this._requestManager.resolve(candidate, null, result)
@@ -436,7 +460,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 
 	/**
 	 * Looks up the max-segments value advertised by the pending request the
-	 * given response belongs to, with the same unknown-peer fallback as
+	 * given response belongs to, with the same key fallbacks as
 	 * `_resolvePendingRequest()`.
 	 */
 	private _getPendingMaxSegments(
@@ -445,10 +469,11 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 	): number | undefined {
 		const pending = this._pendingRequestMaxSegments
 		if (!pending?.size) return undefined
-		return (
-			pending.get(getTransactionKey(header?.sender, invokeId)) ??
-			pending.get(getTransactionKey(undefined, invokeId))
-		)
+		for (const candidate of this._responseKeyCandidates(header, invokeId)) {
+			const maxSegments = pending.get(candidate)
+			if (maxSegments !== undefined) return maxSegments
+		}
+		return undefined
 	}
 
 	private _getApduBuffer(address?: BACNetAddress): EncodeBuffer {
