@@ -88,6 +88,32 @@ test.describe('bacnet - transaction key helpers', () => {
 			)
 		})
 
+		test('treats net 0, null, undefined and 0xffff as the local/no-route peer', () => {
+			// npdu.encode only puts a routed destination on the wire for
+			// net > 0, so these must all produce the same peer identity.
+			const plain = getPeerKey({ address: '1.2.3.4:47808' })
+			assert.strictEqual(
+				getPeerKey({ address: '1.2.3.4', net: 0 }),
+				plain,
+			)
+			assert.strictEqual(
+				getPeerKey({ address: '1.2.3.4', net: 0, adr: [] }),
+				plain,
+			)
+			assert.strictEqual(
+				getPeerKey({ address: '1.2.3.4', net: null, adr: null } as any),
+				plain,
+			)
+			assert.strictEqual(
+				getPeerKey({ address: '1.2.3.4', net: 0xffff }),
+				plain,
+			)
+			assert.notStrictEqual(
+				getPeerKey({ address: '1.2.3.4', net: 1, adr: [1] }),
+				plain,
+			)
+		})
+
 		test('ignores delivery options that are not peer identity', () => {
 			assert.strictEqual(
 				getPeerKey({ address: '1.2.3.4', type: 1 }),

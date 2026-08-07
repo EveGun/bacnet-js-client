@@ -342,6 +342,40 @@ test.describe('bacnet - per-peer transaction correlation', () => {
 		await expectTimeoutA
 	})
 
+	test('receiver with net 0 or net null correlates with a reply without NPDU source', async () => {
+		const { client } = createStubClient()
+		// evolo-gateway passes `net: address?.net ?? null` for local devices;
+		// the reply carries no SADR, so both sides must yield the same key.
+		const promiseA = sendRequest(
+			client,
+			{ address: DEVICE_A, net: 0, adr: undefined },
+			4,
+		)
+		const promiseB = sendRequest(
+			client,
+			{
+				address: DEVICE_B,
+				net: null,
+				adr: null,
+			} as any,
+			4,
+		)
+
+		injectSimpleAck(client, 4, { address: DEVICE_A })
+		injectSimpleAck(client, 4, { address: DEVICE_B })
+		await Promise.all([promiseA, promiseB])
+	})
+
+	test('a routed reply with SADR correlates with a request addressed by router IP alone', async () => {
+		const { client } = createStubClient()
+		const router = '10.0.0.1:47808'
+		const promise = sendRequest(client, { address: router }, 6)
+
+		// The device behind the router answers with its SADR in the NPDU
+		injectSimpleAck(client, 6, { address: router, net: 100, adr: [7] })
+		await promise
+	})
+
 	test('a confirmed request without receiver address still correlates on invokeId alone', async () => {
 		const { client } = createStubClient()
 		const promise = sendRequest(client, {}, 9)
