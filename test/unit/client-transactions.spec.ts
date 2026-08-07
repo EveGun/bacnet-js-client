@@ -399,14 +399,44 @@ test.describe('bacnet - per-peer transaction correlation', () => {
 		assert.strictEqual(result.values[0].values[0].value[0].value, 1)
 	})
 
-	test('a routed reply with SADR correlates with a request addressed by router IP alone', async () => {
+	test('a routed reply with SADR never resolves a request addressed to the router link alone', async () => {
+		// A compliant reply carries SADR exactly when the request carried
+		// DADR, so a routed reply hitting a link-only request would be
+		// stale or misdirected traffic; resolving it would silently hand
+		// data from one device to a request meant for another.
 		const { client } = createStubClient()
 		const router = '10.0.0.1:47808'
 		const promise = sendRequest(client, { address: router }, 6)
+		let resolved = false
+		promise.then(() => (resolved = true))
 
-		// The device behind the router answers with its SADR in the NPDU
 		injectSimpleAck(client, 6, { address: router, net: 100, adr: [7] })
+		await Promise.resolve()
+		assert.strictEqual(resolved, false)
+
+		// The router's own application replies without SADR and matches
+		injectSimpleAck(client, 6, { address: router })
 		await promise
+	})
+
+	test('invokeId counters are bounded with LRU eviction of idle peers', () => {
+		const { client } = createStubClient()
+		// Advance peer A's counter, then touch enough other peers to
+		// overflow the bound; A stays because it was recently reused.
+		client._getInvokeId({ address: '10.0.0.1' })
+		client._getInvokeId({ address: '10.0.0.1' })
+		for (let i = 0; i < 1023; i++) {
+			client._getInvokeId({ address: `10.1.${i >> 8}.${i & 0xff}` })
+		}
+		client._getInvokeId({ address: '10.0.0.1' })
+		for (let i = 0; i < 100; i++) {
+			client._getInvokeId({ address: `10.2.0.${i}` })
+		}
+		assert.ok(client._invokeCounters.size <= 1024)
+		// A's counter survived eviction and continues where it left off
+		assert.strictEqual(client._getInvokeId({ address: '10.0.0.1' }), 3)
+		// The oldest untouched peer was evicted and restarts at 0
+		assert.strictEqual(client._getInvokeId({ address: '10.1.0.0' }), 0)
 	})
 
 	test('a confirmed request without receiver address still correlates on invokeId alone', async () => {
