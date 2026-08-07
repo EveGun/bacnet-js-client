@@ -42,6 +42,35 @@ export class ApduTooLargeError extends Error {
 }
 
 /**
+ * Thrown before any packet is sent when a confirmed request supplies an
+ * invoke ID that is still pending toward the same peer. ASHRAE 135 - 5.4.4:
+ * an invoke ID must be unique among the active transactions with one peer,
+ * although the same invoke ID may be in flight to different peers.
+ */
+export class InvokeIdInUseError extends Error {
+	/** Identity key of the peer the invoke ID is already pending toward */
+	readonly peer: string
+
+	readonly invokeId: number
+
+	readonly service: ConfirmedServiceChoice
+
+	constructor(options: {
+		peer: string
+		invokeId: number
+		service: ConfirmedServiceChoice
+	}) {
+		super(
+			`ERR_INVOKE_ID_IN_USE - invokeId ${options.invokeId} is still pending toward peer ${options.peer}`,
+		)
+		this.name = 'InvokeIdInUseError'
+		this.peer = options.peer
+		this.invokeId = options.invokeId
+		this.service = options.service
+	}
+}
+
+/**
  * Thrown before any packet is sent when the caller-supplied
  * segmented-request options are invalid or unusable.
  */
