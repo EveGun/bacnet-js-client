@@ -18,21 +18,26 @@ class Deferred<T> {
 }
 
 interface RequestEntry {
-	invokeId: number
+	/** Transaction key (peer identity + invokeId), see `getTransactionKey()` */
+	key: string
 	deferred: Deferred<NetworkOpResult>
 	expiresAt: number
 }
 
 /**
+ * Tracks pending confirmed requests by transaction key: the peer identity
+ * combined with the 8-bit invokeId (see `getTransactionKey()`), so the
+ * same invokeId can be pending toward different peers concurrently.
+ *
  * In order to keep O(n) operations outside of hot code paths, the values
- * within the `#invokeIds` array are only guaranteed to match the keys of
- * the `#entries` index right after each call to `clear()`. At any other
- * time, the `#invokeIds` array may contain ids of requests that have already
+ * within the `#requestsByTime` array are only guaranteed to match the keys
+ * of the `#requestsByKey` index right after each call to `clear()`. At any
+ * other time, the array may contain entries of requests that have already
  * been expired or resolved.
  */
 export class RequestManager {
-	/** Index of pending requests by invokeId */
-	#requestsById: Map<number, RequestEntry>
+	/** Index of pending requests by transaction key */
+	#requestsByKey: Map<string, RequestEntry>
 
 	/** Array of requests ordered by creation time */
 	#requestsByTime: RequestEntry[]
@@ -51,44 +56,44 @@ export class RequestManager {
 	#setTimeout: typeof setTimeout
 
 	constructor(delay: number, _setTimeout: typeof setTimeout = setTimeout) {
-		this.#requestsById = new Map()
+		this.#requestsByKey = new Map()
 		this.#requestsByTime = []
 		this.#delay = delay
 		this.#activeTimeout = null
 		this.#setTimeout = _setTimeout
 	}
 
-	add(invokeId: number): Promise<NetworkOpResult> {
+	add(key: string): Promise<NetworkOpResult> {
 		const deferred = new Deferred<NetworkOpResult>()
 		const request = {
-			invokeId,
+			key,
 			deferred,
 			expiresAt: Date.now() + this.#delay,
 		}
-		this.#requestsById.set(invokeId, request)
+		this.#requestsByKey.set(key, request)
 		this.#requestsByTime.push(request)
 		this.#scheduleClear()
 		trace(
-			`InvokeId ${invokeId} callback added -> timeout set to ${this.#delay}.`,
+			`Transaction ${key} callback added -> timeout set to ${this.#delay}.`,
 		)
 		return deferred.promise
 	}
 
-	resolve(invokeId: number, err: Error, result?: undefined): boolean
+	resolve(key: string, err: Error, result?: undefined): boolean
 	resolve(
-		invokeId: number,
+		key: string,
 		err: null | undefined,
 		result: NetworkOpResult,
 	): boolean
 	resolve(
-		invokeId: number,
+		key: string,
 		err: Error | null | undefined,
 		result?: NetworkOpResult,
 	): boolean {
-		const request = this.#requestsById.get(invokeId)
+		const request = this.#requestsByKey.get(key)
 		if (request) {
-			trace(`InvokeId ${invokeId} found -> call callback`)
-			this.#requestsById.delete(invokeId)
+			trace(`Transaction ${key} found -> call callback`)
+			this.#requestsByKey.delete(key)
 			if (err) {
 				request.deferred.reject(err)
 			} else {
@@ -96,8 +101,8 @@ export class RequestManager {
 			}
 			return true
 		}
-		debug('InvokeId', invokeId, 'not found -> drop package')
-		trace(`Stored invokeId: ${Array.from(this.#requestsById.keys())}`)
+		debug('Transaction', key, 'not found -> drop package')
+		trace(`Stored transactions: ${Array.from(this.#requestsByKey.keys())}`)
 		return false
 	}
 
@@ -110,14 +115,14 @@ export class RequestManager {
 		const qty = this.#requestsByTime.length
 		// filter() is usually faster than splice() for small-ish arrays
 		this.#requestsByTime = this.#requestsByTime.filter((request) => {
-			if (!this.#requestsById.has(request.invokeId)) {
+			if (!this.#requestsByKey.has(request.key)) {
 				// Request has already been resolved or expired
 				return false
 			}
 			if (force || request.expiresAt <= now) {
 				// Request has timed out or we forcefully time it out
 				request.deferred.reject(new Error('ERR_TIMEOUT'))
-				this.#requestsById.delete(request.invokeId)
+				this.#requestsByKey.delete(request.key)
 				return false
 			}
 			// Request is still pending

@@ -101,6 +101,7 @@ import {
 import {
 	ApduTooLargeError,
 	InvalidSegmentedRequestError,
+	InvokeIdInUseError,
 	SegmentCountExceededError,
 	SegmentAckTimeoutError,
 } from './errors'
@@ -129,6 +130,14 @@ import {
 	DEFAULT_BACNET_PORT,
 } from './enum'
 import { RequestManager } from './request-manager'
+import {
+	getLinkKey,
+	getPeerKey,
+	getTransactionKey,
+	isRoutedPeer,
+	normalizeAddress,
+	UNKNOWN_PEER_KEY,
+} from './transaction-key'
 
 import { Buffer } from 'buffer'
 const debug = debugLib('bacnet:client:debug')
@@ -275,11 +284,23 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		}
 	>
 
-	private _invokeCounter = 1
+	/** Rolling invokeId counter per link, keyed by link key */
+	private _invokeCounters?: Map<string, number>
+
+	/** InvokeIds reserved by pending confirmed requests toward any peer on
+	 * a link, keyed by link key */
+	private _activeInvokeIds?: Map<string, Set<number>>
+
+	/** Serial transaction queues for routed destinations, keyed by link key */
+	private _linkQueues?: Map<
+		string,
+		{ busy: boolean; waiting: Array<() => void> }
+	>
 
 	private _requestManager: RequestManager
 
-	private _pendingRequestMaxSegments?: Map<number, number>
+	/** Advertised max-segments of pending requests, keyed by transaction key */
+	private _pendingRequestMaxSegments?: Map<string, number>
 
 	private _segmentAssemblyStates?: Map<string, SegmentAssemblyState>
 
@@ -332,10 +353,196 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		this._transport.send(buffer.buffer, buffer.offset, receiver?.address)
 	}
 
-	private _getInvokeId() {
-		const id = this._invokeCounter++
-		if (id >= 256) this._invokeCounter = 1
-		return id - 1
+	private _getInvokeCounters() {
+		if (!this._invokeCounters) {
+			this._invokeCounters = new Map()
+		}
+		return this._invokeCounters
+	}
+
+	private _getActiveInvokeIds() {
+		if (!this._activeInvokeIds) {
+			this._activeInvokeIds = new Map()
+		}
+		return this._activeInvokeIds
+	}
+
+	/**
+	 * Allocates the next free invokeId for the link the given receiver is
+	 * reached over. The rolling counter is LINK-scoped, not peer-scoped:
+	 * ids pending toward ANY peer on the link are skipped, so (link,
+	 * invokeId) is unique among pending requests. This is one half of the
+	 * correlation INVARIANT described in `getTransactionKey()` — responses
+	 * are correlated on (link, invokeId) alone, which is only safe because
+	 * of this allocation rule. With all 256 ids pending on a link the
+	 * request is refused rather than queued.
+	 */
+	private _getInvokeId(receiver?: BACNetAddress) {
+		const linkKey = getLinkKey(receiver)
+		const counters = this._getInvokeCounters()
+		const active = this._activeInvokeIds?.get(linkKey)
+		const start = counters.get(linkKey) ?? 0
+		for (let i = 0; i < 256; i++) {
+			const id = (start + i) & 0xff
+			if (!active?.has(id)) {
+				counters.set(linkKey, (id + 1) & 0xff)
+				return id
+			}
+		}
+		throw new Error('ERR_MAX_CONCURRENT_REQUESTS')
+	}
+
+	/**
+	 * Reserves an invokeId on one link for the lifetime of a confirmed
+	 * request, refusing reuse while a request with the same invokeId is
+	 * still pending toward any peer on that link.
+	 */
+	private _acquireInvokeId(
+		linkKey: string,
+		invokeId: number,
+		service: ConfirmedServiceChoice,
+	): void {
+		const activeIds = this._getActiveInvokeIds()
+		let active = activeIds.get(linkKey)
+		if (!active) {
+			active = new Set()
+			activeIds.set(linkKey, active)
+		}
+		if (active.has(invokeId)) {
+			throw new InvokeIdInUseError({ peer: linkKey, invokeId, service })
+		}
+		active.add(invokeId)
+	}
+
+	private _releaseInvokeId(linkKey: string, invokeId: number): void {
+		const active = this._activeInvokeIds?.get(linkKey)
+		if (!active) return
+		active.delete(invokeId)
+		if (active.size === 0) {
+			this._activeInvokeIds.delete(linkKey)
+		}
+	}
+
+	private _getLinkQueues() {
+		if (!this._linkQueues) {
+			this._linkQueues = new Map()
+		}
+		return this._linkQueues
+	}
+
+	/**
+	 * Runs confirmed-request transactions toward one link strictly one at
+	 * a time, in FIFO order. Used for routed destinations (net/adr set):
+	 * MS/TP segments behind a router typically sustain only one
+	 * outstanding transaction, and serializing also keeps the shared
+	 * link-scoped invokeId space calm during scans. Direct peers bypass
+	 * this entirely and keep full concurrency.
+	 *
+	 * The slot is held until the entire transaction settles — for
+	 * segmented requests that includes every segment, the SegmentACK
+	 * exchange and the final service response. The apduTimeout of a queued
+	 * request is armed when it is actually sent (`RequestManager.add`
+	 * happens inside the task), not while waiting for the slot.
+	 */
+	private async _runSerializedOnLink<T>(
+		linkKey: string,
+		task: () => Promise<T>,
+	): Promise<T> {
+		const queues = this._getLinkQueues()
+		let state = queues.get(linkKey)
+		if (!state) {
+			state = { busy: false, waiting: [] }
+			queues.set(linkKey, state)
+		}
+		if (state.busy) {
+			await new Promise<void>((resolve) => state.waiting.push(resolve))
+		} else {
+			state.busy = true
+		}
+		try {
+			if (this._isClosed) {
+				throw new Error('ERR_CLOSED')
+			}
+			return await task()
+		} finally {
+			const next = state.waiting.shift()
+			if (next) {
+				// Hand the slot to the next waiter; busy stays true
+				next()
+			} else {
+				state.busy = false
+				if (queues.get(linkKey) === state) {
+					queues.delete(linkKey)
+				}
+			}
+		}
+	}
+
+	/**
+	 * Candidate transaction keys for correlating a response, per the
+	 * (link, invokeId) INVARIANT in `getTransactionKey()`: both the sender
+	 * address and the forwarded originating address are tried as link
+	 * candidates (a device behind a BBMD may answer forwarded through the
+	 * BBMD or directly), followed by the unknown-peer key so confirmed
+	 * requests that were broadcast without a receiver address still
+	 * correlate on invokeId alone. The routed net/adr of the sender is
+	 * deliberately ignored — link-scoped allocation guarantees at most one
+	 * pending request per (link, invokeId).
+	 */
+	private _responseKeyCandidates(
+		header: BACnetMessageHeader | undefined,
+		invokeId: number,
+	): string[] {
+		const keys: string[] = []
+		const push = (key: string) => {
+			if (!keys.includes(key)) keys.push(key)
+		}
+		const sender = header?.sender
+		const addressLink = normalizeAddress(sender?.address)
+		if (addressLink) push(`${addressLink}#${invokeId}`)
+		if (sender?.forwardedFrom) {
+			const forwardedLink = normalizeAddress(sender.forwardedFrom)
+			if (forwardedLink) push(`${forwardedLink}#${invokeId}`)
+		}
+		push(`${UNKNOWN_PEER_KEY}#${invokeId}`)
+		return keys
+	}
+
+	/**
+	 * Resolves the pending request identified by the responding peer and
+	 * invokeId, trying `_responseKeyCandidates()` most specific first.
+	 */
+	private _resolvePendingRequest(
+		header: BACnetMessageHeader | undefined,
+		invokeId: number,
+		err: Error | null,
+		result?: NetworkOpResult,
+	): boolean {
+		for (const candidate of this._responseKeyCandidates(header, invokeId)) {
+			const resolved = err
+				? this._requestManager.resolve(candidate, err)
+				: this._requestManager.resolve(candidate, null, result)
+			if (resolved) return true
+		}
+		return false
+	}
+
+	/**
+	 * Looks up the max-segments value advertised by the pending request the
+	 * given response belongs to, with the same key fallbacks as
+	 * `_resolvePendingRequest()`.
+	 */
+	private _getPendingMaxSegments(
+		header: BACnetMessageHeader | undefined,
+		invokeId: number,
+	): number | undefined {
+		const pending = this._pendingRequestMaxSegments
+		if (!pending?.size) return undefined
+		for (const candidate of this._responseKeyCandidates(header, invokeId)) {
+			const maxSegments = pending.get(candidate)
+			if (maxSegments !== undefined) return maxSegments
+		}
+		return undefined
 	}
 
 	private _getApduBuffer(address?: BACNetAddress): EncodeBuffer {
@@ -350,45 +557,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		address?: string,
 		strictPort = false,
 	): string | null {
-		const value = String(address ?? '').trim()
-		if (!value) return null
-
-		const parts = value.split(':')
-		if (parts.length > 2) {
-			if (strictPort)
-				throw new Error(`Invalid receiver.address "${value}"`)
-			return null
-		}
-
-		const host = parts[0]?.trim()
-		if (!host) {
-			if (strictPort)
-				throw new Error(`Invalid receiver.address "${value}"`)
-			return null
-		}
-
-		if (parts.length === 1) {
-			if (strictPort)
-				throw new Error(`Invalid receiver.address "${value}"`)
-			return `${host}:${DEFAULT_BACNET_PORT}`
-		}
-
-		const portRaw = parts[1]?.trim()
-		if (!portRaw) {
-			if (strictPort)
-				throw new Error(`Invalid receiver.address "${value}"`)
-			return `${host}:${DEFAULT_BACNET_PORT}`
-		}
-
-		const port = Number(portRaw)
-		const isValidPort = Number.isInteger(port) && port >= 1 && port <= 65535
-		if (!isValidPort) {
-			if (strictPort)
-				throw new Error(`Invalid receiver.address "${value}"`)
-			return null
-		}
-
-		return `${host}:${port}`
+		return normalizeAddress(address, strictPort)
 	}
 
 	private _getPendingForeignDeviceRegistrations() {
@@ -416,9 +585,15 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		msg: SegmentableMessage,
 		server: boolean,
 	): string {
-		const sender =
-			this._normalizeAddress(msg.header?.sender?.address) ?? 'unknown'
-		return `${server ? 'srv' : 'cli'}|${sender}|${msg.invokeId}`
+		// Server role: requests FROM remote peers always traverse the
+		// router and carry SADR, and two devices behind one router may
+		// legitimately use the same invokeId toward us — key by full peer.
+		// Client role: responses to OUR requests may lack SADR, and (link,
+		// invokeId) is unique among pending requests — key by link.
+		if (server) {
+			return `srv|${getPeerKey(msg.header?.sender)}#${msg.invokeId}`
+		}
+		return `cli|${getTransactionKey(msg.header?.sender, msg.invokeId)}`
 	}
 
 	private _getOutgoingSegmentTransactions() {
@@ -426,14 +601,6 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			this._outgoingSegmentTransactions = new Map()
 		}
 		return this._outgoingSegmentTransactions
-	}
-
-	private _getOutgoingSegmentKey(
-		address: string | undefined,
-		invokeId: number,
-	): string {
-		const receiver = this._normalizeAddress(address) ?? 'unknown'
-		return `${receiver}|${invokeId}`
 	}
 
 	/**
@@ -444,6 +611,36 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 	 * validation, the segment state machine and awaiting the response.
 	 */
 	private async _sendConfirmedRequest(args: {
+		receiver: BACNetAddress
+		service: ConfirmedServiceChoice
+		maxSegments: number
+		maxApdu: number
+		invokeId: number
+		acceptSegmentedResponse?: boolean
+		segmentedRequest?: SegmentedRequestOptions
+		encodePayload: (buffer: EncodeBuffer) => void
+	}): Promise<NetworkOpResult> {
+		// Reserve the invokeId on this link for the lifetime of the request
+		// so it cannot be reused toward any peer on the link while pending;
+		// the same invokeId stays available on other links. Reservation
+		// happens before queueing so allocation skips queued ids too.
+		const linkKey = getLinkKey(args.receiver)
+		this._acquireInvokeId(linkKey, args.invokeId, args.service)
+		try {
+			if (isRoutedPeer(args.receiver)) {
+				// Routed destinations share one serial transaction slot per
+				// link; direct peers keep full concurrency.
+				return await this._runSerializedOnLink(linkKey, () =>
+					this._dispatchConfirmedRequest(args),
+				)
+			}
+			return await this._dispatchConfirmedRequest(args)
+		} finally {
+			this._releaseInvokeId(linkKey, args.invokeId)
+		}
+	}
+
+	private async _dispatchConfirmedRequest(args: {
 		receiver: BACNetAddress
 		service: ConfirmedServiceChoice
 		maxSegments: number
@@ -550,7 +747,11 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			}
 		}
 		this.sendBvlc(args.receiver, buffer)
-		return this._awaitResponse(args.invokeId, args.maxSegments)
+		return this._awaitResponse(
+			args.receiver,
+			args.invokeId,
+			args.maxSegments,
+		)
 	}
 
 	private async _sendSegmentedConfirmedRequest(
@@ -729,13 +930,14 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			payloadView.copy(buffer.buffer, buffer.offset)
 			buffer.offset += payloadView.length
 			this.sendBvlc(args.receiver, buffer)
-			return this._awaitResponse(args.invokeId, args.maxSegments)
+			return this._awaitResponse(
+				args.receiver,
+				args.invokeId,
+				args.maxSegments,
+			)
 		}
 
-		const key = this._getOutgoingSegmentKey(
-			args.receiver?.address,
-			args.invokeId,
-		)
+		const key = getTransactionKey(args.receiver, args.invokeId)
 		const transactions = this._getOutgoingSegmentTransactions()
 		if (transactions.has(key)) {
 			throw new InvalidSegmentedRequestError({
@@ -849,6 +1051,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			// (or reordered) response is not dropped.
 			state.responseRegistered = true
 			state.responsePromise = this._awaitResponse(
+				state.receiver,
 				state.invokeId,
 				state.maxSegments,
 			)
@@ -932,8 +1135,9 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		this._getOutgoingSegmentTransactions().delete(state.key)
 		if (state.responseRegistered) {
 			// Settle the pending response entry so it does not linger
-			// until its own timeout.
-			this._requestManager.resolve(state.invokeId, err)
+			// until its own timeout. The transaction key of the response
+			// entry equals the outgoing transaction key.
+			this._requestManager.resolve(state.key, err)
 		}
 		state.rejectTransfer(err)
 	}
@@ -956,11 +1160,13 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		if (!this._outgoingSegmentTransactions?.size) {
 			return undefined
 		}
-		const key = this._getOutgoingSegmentKey(
-			header?.sender?.address,
-			invokeId,
-		)
-		return this._outgoingSegmentTransactions.get(key)
+		// Same link candidates as response correlation: SegmentACKs from
+		// routed peers may also arrive without SADR.
+		for (const key of this._responseKeyCandidates(header, invokeId)) {
+			const state = this._outgoingSegmentTransactions.get(key)
+			if (state) return state
+		}
+		return undefined
 	}
 
 	/**
@@ -996,14 +1202,16 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 	}
 
 	private async _awaitResponse(
+		receiver: BACNetAddress | undefined,
 		invokeId: number,
 		maxSegments: number,
 	): Promise<any> {
-		this._getPendingRequestMaxSegments().set(invokeId, maxSegments)
+		const key = getTransactionKey(receiver, invokeId)
+		this._getPendingRequestMaxSegments().set(key, maxSegments)
 		try {
-			return await this._requestManager.add(invokeId)
+			return await this._requestManager.add(key)
 		} finally {
-			this._getPendingRequestMaxSegments().delete(invokeId)
+			this._getPendingRequestMaxSegments().delete(key)
 		}
 	}
 
@@ -1094,7 +1302,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			`BacnetError - Class:${result.class} - Code:${result.code}`,
 		)
 		this._failSegmentTransferOnTerminal(header, invokeId, err)
-		this._requestManager.resolve(invokeId, err)
+		this._resolvePendingRequest(header, invokeId, err)
 	}
 
 	private _processAbort(
@@ -1104,7 +1312,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 	) {
 		const err = new Error(`BacnetAbort - Reason:${reason}`)
 		this._failSegmentTransferOnTerminal(header, invokeId, err)
-		this._requestManager.resolve(invokeId, err)
+		this._resolvePendingRequest(header, invokeId, err)
 	}
 
 	private _segmentAckResponse(
@@ -1576,7 +1784,8 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 					header,
 					(msg as HasInvokeId).invokeId,
 				)
-				this._requestManager.resolve(
+				this._resolvePendingRequest(
+					header,
 					(msg as HasInvokeId).invokeId,
 					null,
 					{
@@ -1601,7 +1810,8 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 				const isSegmentedMessage =
 					(header.apduType & PduConReqBit.SEGMENTED_MESSAGE) !== 0
 				if (!isSegmentedMessage) {
-					this._requestManager.resolve(
+					this._resolvePendingRequest(
+						header,
 						(msg as HasInvokeId).invokeId,
 						null,
 						{
@@ -1612,10 +1822,10 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 						},
 					)
 				} else {
-					const requestMaxSegments =
-						this._getPendingRequestMaxSegments().get(
-							(msg as HasInvokeId).invokeId,
-						)
+					const requestMaxSegments = this._getPendingMaxSegments(
+						header,
+						(msg as HasInvokeId).invokeId,
+					)
 					if (
 						this._settings
 							.abortOnSegmentedResponseWhenNoSegAccepted &&
@@ -1627,7 +1837,8 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 							AbortReason.SEGMENTATION_NOT_SUPPORTED,
 							false,
 						)
-						this._requestManager.resolve(
+						this._resolvePendingRequest(
+							header,
 							(msg as HasInvokeId).invokeId,
 							new Error(
 								`BacnetAbort - Reason:${AbortReason.SEGMENTATION_NOT_SUPPORTED}`,
@@ -2136,7 +2347,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 				MaxApduLengthAccepted.OCTETS_1476,
 			invokeId:
 				(options as ReadPropertyOptions).invokeId ||
-				this._getInvokeId(),
+				this._getInvokeId(receiver),
 			arrayIndex:
 				(options as ReadPropertyOptions).arrayIndex !== undefined
 					? (options as ReadPropertyOptions).arrayIndex
@@ -2193,7 +2404,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 				MaxApduLengthAccepted.OCTETS_1476,
 			invokeId:
 				(options as WritePropertyOptions).invokeId ||
-				this._getInvokeId(),
+				this._getInvokeId(receiver),
 			arrayIndex:
 				(options as WritePropertyOptions).arrayIndex ?? ASN1_ARRAY_ALL,
 			priority:
@@ -2236,7 +2447,8 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 				(options as ServiceOptions).maxApdu ||
 				MaxApduLengthAccepted.OCTETS_1476,
 			invokeId:
-				(options as ServiceOptions).invokeId || this._getInvokeId(),
+				(options as ServiceOptions).invokeId ||
+				this._getInvokeId(receiver),
 		}
 		const data = await this._sendConfirmedRequest({
 			receiver,
@@ -2276,7 +2488,8 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 				(options as ServiceOptions).maxApdu ||
 				MaxApduLengthAccepted.OCTETS_1476,
 			invokeId:
-				(options as ServiceOptions).invokeId || this._getInvokeId(),
+				(options as ServiceOptions).invokeId ||
+				this._getInvokeId(receiver),
 		}
 		await this._sendConfirmedRequest({
 			receiver,
@@ -2314,7 +2527,8 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 				(options as ServiceOptions).maxApdu ||
 				MaxApduLengthAccepted.OCTETS_1476,
 			invokeId:
-				(options as ServiceOptions).invokeId || this._getInvokeId(),
+				(options as ServiceOptions).invokeId ||
+				this._getInvokeId(receiver),
 		}
 		await this._sendConfirmedRequest({
 			receiver,
@@ -2353,7 +2567,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 				MaxApduLengthAccepted.OCTETS_1476,
 			invokeId:
 				(options as DeviceCommunicationOptions).invokeId ||
-				this._getInvokeId(),
+				this._getInvokeId(receiver),
 			password: (options as DeviceCommunicationOptions).password,
 		}
 		await this._sendConfirmedRequest({
@@ -2390,7 +2604,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 				MaxApduLengthAccepted.OCTETS_1476,
 			invokeId:
 				(options as ReinitializeDeviceOptions).invokeId ||
-				this._getInvokeId(),
+				this._getInvokeId(receiver),
 			password: (options as ReinitializeDeviceOptions).password,
 		}
 		await this._sendConfirmedRequest({
@@ -2423,7 +2637,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		const settings = {
 			maxSegments: options.maxSegments ?? MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu: options.maxApdu || MaxApduLengthAccepted.OCTETS_1476,
-			invokeId: options.invokeId || this._getInvokeId(),
+			invokeId: options.invokeId || this._getInvokeId(receiver),
 		}
 		// Default to stream mode (true) as it's the most common file access method
 		const isStream =
@@ -2473,7 +2687,8 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 				(options as ServiceOptions).maxApdu ||
 				MaxApduLengthAccepted.OCTETS_1476,
 			invokeId:
-				(options as ServiceOptions).invokeId || this._getInvokeId(),
+				(options as ServiceOptions).invokeId ||
+				this._getInvokeId(receiver),
 		}
 		const data = await this._sendConfirmedRequest({
 			receiver,
@@ -2518,7 +2733,8 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 				(options as ServiceOptions).maxApdu ||
 				MaxApduLengthAccepted.OCTETS_1476,
 			invokeId:
-				(options as ServiceOptions).invokeId || this._getInvokeId(),
+				(options as ServiceOptions).invokeId ||
+				this._getInvokeId(receiver),
 		}
 		const propertyId = options.propertyId ?? PropertyIdentifier.LOG_BUFFER
 		const arrayIndex = options.arrayIndex ?? ASN1_ARRAY_ALL
@@ -2569,7 +2785,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		const settings = {
 			maxSegments: options.maxSegments ?? MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu: options.maxApdu || MaxApduLengthAccepted.OCTETS_1476,
-			invokeId: options.invokeId || this._getInvokeId(),
+			invokeId: options.invokeId || this._getInvokeId(receiver),
 		}
 		await this._sendConfirmedRequest({
 			receiver,
@@ -2605,7 +2821,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		const settings = {
 			maxSegments: options.maxSegments ?? MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu: options.maxApdu || MaxApduLengthAccepted.OCTETS_1476,
-			invokeId: options.invokeId || this._getInvokeId(),
+			invokeId: options.invokeId || this._getInvokeId(receiver),
 		}
 		await this._sendConfirmedRequest({
 			receiver,
@@ -2687,7 +2903,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		const settings = {
 			maxSegments: options.maxSegments ?? MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu: options.maxApdu || MaxApduLengthAccepted.OCTETS_1476,
-			invokeId: options.invokeId || this._getInvokeId(),
+			invokeId: options.invokeId || this._getInvokeId(receiver),
 		}
 		await this._sendConfirmedRequest({
 			receiver,
@@ -2712,7 +2928,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		const settings = {
 			maxSegments: options.maxSegments ?? MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu: options.maxApdu || MaxApduLengthAccepted.OCTETS_1476,
-			invokeId: options.invokeId || this._getInvokeId(),
+			invokeId: options.invokeId || this._getInvokeId(receiver),
 		}
 		await this._sendConfirmedRequest({
 			receiver,
@@ -2741,7 +2957,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		const settings = {
 			maxSegments: options.maxSegments ?? MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu: options.maxApdu || MaxApduLengthAccepted.OCTETS_1476,
-			invokeId: options.invokeId || this._getInvokeId(),
+			invokeId: options.invokeId || this._getInvokeId(receiver),
 		}
 		await this._sendConfirmedRequest({
 			receiver,
@@ -2777,7 +2993,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		const settings = {
 			maxSegments: options.maxSegments ?? MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu: options.maxApdu || MaxApduLengthAccepted.OCTETS_1476,
-			invokeId: options.invokeId || this._getInvokeId(),
+			invokeId: options.invokeId || this._getInvokeId(receiver),
 		}
 		await this._sendConfirmedRequest({
 			receiver,
@@ -2812,7 +3028,8 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 				(options as ServiceOptions).maxApdu ||
 				MaxApduLengthAccepted.OCTETS_1476,
 			invokeId:
-				(options as ServiceOptions).invokeId || this._getInvokeId(),
+				(options as ServiceOptions).invokeId ||
+				this._getInvokeId(receiver),
 		}
 		const data = await this._sendConfirmedRequest({
 			receiver,
@@ -2861,7 +3078,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			const invokeId =
 				page === 0 && options.invokeId != null
 					? options.invokeId
-					: this._getInvokeId()
+					: this._getInvokeId(receiver)
 			const currentObjectId = lastReceivedObjectId
 			const data = await this._sendConfirmedRequest({
 				receiver,
@@ -2930,7 +3147,8 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 				(options as ServiceOptions).maxApdu ||
 				MaxApduLengthAccepted.OCTETS_1476,
 			invokeId:
-				(options as ServiceOptions).invokeId || this._getInvokeId(),
+				(options as ServiceOptions).invokeId ||
+				this._getInvokeId(receiver),
 		}
 		await this._sendConfirmedRequest({
 			receiver,
@@ -2970,7 +3188,8 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 				(options as ServiceOptions).maxApdu ||
 				MaxApduLengthAccepted.OCTETS_1476,
 			invokeId:
-				(options as ServiceOptions).invokeId || this._getInvokeId(),
+				(options as ServiceOptions).invokeId ||
+				this._getInvokeId(receiver),
 		}
 		await this._sendConfirmedRequest({
 			receiver,
@@ -3015,7 +3234,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		const settings: ServiceOptions = {
 			maxSegments: options.maxSegments ?? MaxSegmentsAccepted.SEGMENTS_65,
 			maxApdu: options.maxApdu || MaxApduLengthAccepted.OCTETS_1476,
-			invokeId: options.invokeId || this._getInvokeId(),
+			invokeId: options.invokeId || this._getInvokeId(receiver),
 		}
 		const data = await this._sendConfirmedRequest({
 			receiver,
@@ -3080,7 +3299,8 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 				(options as ServiceOptions).maxApdu ||
 				MaxApduLengthAccepted.OCTETS_1476,
 			invokeId:
-				(options as ServiceOptions).invokeId || this._getInvokeId(),
+				(options as ServiceOptions).invokeId ||
+				this._getInvokeId(receiver),
 		}
 		await this._sendConfirmedRequest({
 			receiver,

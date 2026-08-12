@@ -18,6 +18,11 @@ test.describe('RequestManager', () => {
 
 	const delay = 100
 
+	// Requests are tracked by transaction key: peer identity + invokeId
+	const KEY_42 = '192.168.1.50:47808#42'
+	const KEY_43 = '192.168.1.50:47808#43'
+	const KEY_44 = '192.168.1.60:47808#42'
+
 	afterEach(() => {
 		manager.clear(true)
 	})
@@ -26,16 +31,16 @@ test.describe('RequestManager', () => {
 		t.mock.timers.enable({ apis: ['setTimeout', 'Date'] })
 		manager = new RequestManager(delay)
 		queueMicrotask(() => {
-			manager.resolve(42, undefined, result)
+			manager.resolve(KEY_42, undefined, result)
 		})
-		assert.strictEqual(await manager.add(42), result)
+		assert.strictEqual(await manager.add(KEY_42), result)
 	})
 
 	test('add() should return a promise that rejects if resolve() is called before the timeout with an error', async (t) => {
 		t.mock.timers.enable({ apis: ['setTimeout', 'Date'] })
 		manager = new RequestManager(delay)
-		const promise = manager.add(42)
-		manager.resolve(42, error)
+		const promise = manager.add(KEY_42)
+		manager.resolve(KEY_42, error)
 		await assert.rejects(promise, (err: Error) => {
 			assert.strictEqual(err, error)
 			return true
@@ -45,7 +50,7 @@ test.describe('RequestManager', () => {
 	test('add() should return a promise that rejects if resolve() is never called', async (t) => {
 		t.mock.timers.enable({ apis: ['setTimeout', 'Date'] })
 		manager = new RequestManager(delay)
-		const promise = manager.add(42)
+		const promise = manager.add(KEY_42)
 		t.mock.timers.tick(delay)
 		await assert.rejects(promise, (err: Error) => {
 			assert.strictEqual(err.message, 'ERR_TIMEOUT')
@@ -56,9 +61,9 @@ test.describe('RequestManager', () => {
 	test('add() should return a promise that rejects if resolve() is called after the timeout without errors', async (t) => {
 		t.mock.timers.enable({ apis: ['setTimeout', 'Date'] })
 		manager = new RequestManager(delay)
-		const promise = manager.add(42)
+		const promise = manager.add(KEY_42)
 		t.mock.timers.tick(delay)
-		manager.resolve(42, undefined, result)
+		manager.resolve(KEY_42, undefined, result)
 		await assert.rejects(promise, (err: Error) => {
 			assert.strictEqual(err.message, 'ERR_TIMEOUT')
 			return true
@@ -68,24 +73,24 @@ test.describe('RequestManager', () => {
 	test('add() should return a promise that cannot be resolved twice', async (t) => {
 		t.mock.timers.enable({ apis: ['setTimeout', 'Date'] })
 		manager = new RequestManager(delay)
-		manager.add(42).catch(() => {})
-		assert.strictEqual(manager.resolve(42, undefined, result), true)
-		assert.strictEqual(manager.resolve(42, undefined, result), false)
+		manager.add(KEY_42).catch(() => {})
+		assert.strictEqual(manager.resolve(KEY_42, undefined, result), true)
+		assert.strictEqual(manager.resolve(KEY_42, undefined, result), false)
 	})
 
 	test('add() should return a promise that cannot be resolved after the request has timed out', async (t) => {
 		t.mock.timers.enable({ apis: ['setTimeout', 'Date'] })
 		manager = new RequestManager(delay)
-		manager.add(42).catch(() => {})
+		manager.add(KEY_42).catch(() => {})
 		t.mock.timers.tick(delay)
-		assert.strictEqual(manager.resolve(42, undefined, result), false)
+		assert.strictEqual(manager.resolve(KEY_42, undefined, result), false)
 	})
 
 	test('one invocation of add() should result in one invocation of setTimeout()', async (t) => {
 		t.mock.timers.enable({ apis: ['setTimeout', 'Date'] })
 		const spy = t.mock.fn(setTimeout)
 		manager = new RequestManager(delay, spy)
-		manager.add(42).catch(() => {})
+		manager.add(KEY_42).catch(() => {})
 		assert.strictEqual(spy.mock.callCount(), 1)
 		t.mock.timers.tick(delay)
 		assert.strictEqual(spy.mock.callCount(), 1)
@@ -95,8 +100,8 @@ test.describe('RequestManager', () => {
 		t.mock.timers.enable({ apis: ['setTimeout', 'Date'] })
 		const spy = t.mock.fn(setTimeout)
 		manager = new RequestManager(delay, spy)
-		manager.add(42).catch(() => {})
-		manager.add(43).catch(() => {})
+		manager.add(KEY_42).catch(() => {})
+		manager.add(KEY_43).catch(() => {})
 		assert.strictEqual(spy.mock.callCount(), 1)
 		t.mock.timers.tick(delay)
 		assert.strictEqual(spy.mock.callCount(), 1)
@@ -106,10 +111,10 @@ test.describe('RequestManager', () => {
 		t.mock.timers.enable({ apis: ['setTimeout', 'Date'] })
 		const spy = t.mock.fn(setTimeout)
 		manager = new RequestManager(delay, spy)
-		manager.add(42).catch(() => {})
+		manager.add(KEY_42).catch(() => {})
 		assert.strictEqual(spy.mock.callCount(), 1)
 		t.mock.timers.tick(delay / 4)
-		manager.add(43).catch(() => {})
+		manager.add(KEY_43).catch(() => {})
 		assert.strictEqual(spy.mock.callCount(), 1)
 	})
 
@@ -117,13 +122,13 @@ test.describe('RequestManager', () => {
 		t.mock.timers.enable({ apis: ['setTimeout', 'Date'] })
 		const spy = t.mock.fn(setTimeout)
 		manager = new RequestManager(delay, spy)
-		manager.add(42).catch(() => {})
+		manager.add(KEY_42).catch(() => {})
 		assert.strictEqual(spy.mock.callCount(), 1)
 		t.mock.timers.tick(delay)
-		manager.add(43).catch(() => {})
+		manager.add(KEY_43).catch(() => {})
 		assert.strictEqual(spy.mock.callCount(), 2)
 		t.mock.timers.tick(delay)
-		manager.add(44).catch(() => {})
+		manager.add(KEY_44).catch(() => {})
 		assert.strictEqual(spy.mock.callCount(), 3)
 	})
 })

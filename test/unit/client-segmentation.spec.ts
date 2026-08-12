@@ -26,6 +26,7 @@ import {
 import {
 	ApduTooLargeError,
 	InvalidSegmentedRequestError,
+	InvokeIdInUseError,
 	SegmentAckTimeoutError,
 	SegmentCountExceededError,
 } from '../../src/lib/errors'
@@ -87,7 +88,12 @@ function injectSegmentAck(
 	invokeId: number,
 	sequencenumber: number,
 	actualWindowSize: number,
-	opts: { negative?: boolean; server?: boolean; sender?: string } = {},
+	opts: {
+		negative?: boolean
+		server?: boolean
+		sender?: string
+		forwardedFrom?: string
+	} = {},
 ) {
 	const type =
 		PduType.SEGMENT_ACK |
@@ -104,7 +110,10 @@ function injectSegmentAck(
 	)
 	client._handlePdu(buffer, 0, apdu.offset, {
 		apduType: type,
-		sender: { address: opts.sender ?? DEVICE },
+		sender: {
+			address: opts.sender ?? DEVICE,
+			forwardedFrom: opts.forwardedFrom,
+		},
 		expectingReply: false,
 		confirmedService: false,
 	})
@@ -113,7 +122,7 @@ function injectSegmentAck(
 function injectSimpleAck(
 	client: any,
 	invokeId: number,
-	opts: { sender?: string; service?: number } = {},
+	opts: { sender?: string; service?: number; forwardedFrom?: string } = {},
 ) {
 	const buffer = Buffer.alloc(8)
 	const apdu = { buffer, offset: 0 }
@@ -125,7 +134,10 @@ function injectSimpleAck(
 	)
 	client._handlePdu(buffer, 0, apdu.offset, {
 		apduType: PduType.SIMPLE_ACK,
-		sender: { address: opts.sender ?? DEVICE },
+		sender: {
+			address: opts.sender ?? DEVICE,
+			forwardedFrom: opts.forwardedFrom,
+		},
 		expectingReply: false,
 		confirmedService: false,
 	})
@@ -578,9 +590,10 @@ test.describe('bacnet - outgoing request segmentation', () => {
 		})
 		// Let the first SegmentACK time out once to cover retransmission
 		await sleep(45)
-		injectSegmentAck(client, 1, 0, 1)
-		injectSegmentAck(client, 1, 1, 1)
-		injectSimpleAck(client, 1)
+		const forwardedFrom = '10.0.0.5:47808'
+		injectSegmentAck(client, 1, 0, 1, { forwardedFrom })
+		injectSegmentAck(client, 1, 1, 1, { forwardedFrom })
+		injectSimpleAck(client, 1, { forwardedFrom })
 		await promise
 
 		assert.ok(sent.length >= 3)
@@ -690,9 +703,9 @@ test.describe('bacnet - outgoing request segmentation', () => {
 				payloadLength: 10,
 				segmentedRequest: { enabled: true, remoteMaxApduLength: 12 },
 			}),
-			(err: InvalidSegmentedRequestError) => {
-				assert.ok(err instanceof InvalidSegmentedRequestError)
-				assert.strictEqual(err.option, 'invokeId')
+			(err: InvokeIdInUseError) => {
+				assert.ok(err instanceof InvokeIdInUseError)
+				assert.strictEqual(err.invokeId, 1)
 				return true
 			},
 		)
@@ -851,6 +864,8 @@ test.describe('bacnet - incoming segmentation hardening', () => {
 		moreFollows: boolean
 		sender?: string
 		service?: number
+		net?: number
+		adr?: number[]
 	}) =>
 		({
 			type:
@@ -864,7 +879,11 @@ test.describe('bacnet - incoming segmentation hardening', () => {
 			header: {
 				apduType:
 					PduType.CONFIRMED_REQUEST | PduConReqBit.SEGMENTED_MESSAGE,
-				sender: { address: options.sender ?? DEVICE },
+				sender: {
+					address: options.sender ?? DEVICE,
+					net: options.net,
+					adr: options.adr,
+				},
 				expectingReply: true,
 				confirmedService: true,
 			},
@@ -1005,6 +1024,41 @@ test.describe('bacnet - incoming segmentation hardening', () => {
 		)
 		assert.strictEqual(client._segmentAssemblyStates.size, 1)
 		await sleep(80)
+		assert.strictEqual(client._segmentAssemblyStates.size, 0)
+	})
+
+	test('server role: assemblies from two routed devices behind one link with the same invokeId stay isolated', () => {
+		// Requests FROM routed devices always carry SADR, and their TSMs
+		// are per-peer, so the same invokeId from two devices behind one
+		// router link is legitimate. Server-role reassembly is keyed by
+		// the full peer (incl. net/adr), unlike our own client-role
+		// transactions which are link-scoped.
+		const { client } = createStubClient()
+		let negativeAcks = 0
+		client._segmentAckResponse = (_receiver: any, negative: boolean) => {
+			if (negative) negativeAcks++
+		}
+		client._performDefaultSegmentHandling = () => {}
+
+		for (let seq = 0; seq <= 2; seq++) {
+			for (const adr of [[1], [2]]) {
+				client._processSegment(
+					makeSegmentMsg({
+						invokeId: 9,
+						sequencenumber: seq,
+						window: 1,
+						moreFollows: seq < 2,
+						net: 5,
+						adr,
+					}),
+					true,
+					Buffer.alloc(1),
+					0,
+					1,
+				)
+			}
+		}
+		assert.strictEqual(negativeAcks, 0)
 		assert.strictEqual(client._segmentAssemblyStates.size, 0)
 	})
 
