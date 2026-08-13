@@ -402,6 +402,7 @@ export interface ApplicationTagValueTypeMap {
 	[ApplicationTag.CONTEXT_SPECIFIC_DECODED]: any
 	[ApplicationTag.CONTEXT_SPECIFIC_ENCODED]: any
 	[ApplicationTag.LOG_RECORD]: any
+	[ApplicationTag.HOST_N_PORT]: BACNetHostNPort
 }
 
 export interface BACNetPropertyState {
@@ -433,6 +434,21 @@ export interface BACNetTimestamp<T extends TimeStamp = TimeStamp> {
 export interface Decode<T> {
 	len: number
 	value: T
+}
+
+/**
+ * BACnetHostNPort (ASHRAE 135-2020 Clause 21): a host CHOICE plus a UDP
+ * port. Used by Network Port properties such as FD_BBMD_Address.
+ * `host.type` follows the HostAddressType enum: NONE carries no payload,
+ * IP_ADDRESS carries `address` (raw octets), NAME carries `name`.
+ */
+export interface BACNetHostNPort {
+	host: {
+		type: number
+		address?: number[]
+		name?: string
+	}
+	port: number
 }
 
 export interface Tag {

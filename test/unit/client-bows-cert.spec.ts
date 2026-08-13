@@ -6,12 +6,15 @@ import { RequestManager } from '../../src/lib/request-manager'
 import * as baBvlc from '../../src/lib/bvlc'
 import * as baNpdu from '../../src/lib/npdu'
 import * as baApdu from '../../src/lib/apdu'
+import * as baAsn1 from '../../src/lib/asn1'
 import { ReadProperty, WhoHas } from '../../src/lib/services'
 import {
 	AbortReason,
 	ApplicationTag,
 	BvlcResultFormat,
 	BvlcResultPurpose,
+	HostAddressType,
+	PropertyIdentifier,
 	ConfirmedServiceChoice,
 	ErrorClass,
 	ErrorCode,
@@ -617,6 +620,59 @@ test('bacnet - responder overflow protection (135.1 9.18.1.6)', async (t) => {
 			)
 		},
 	)
+
+	await t.test('BACnetHostNPort round-trips through asn1', () => {
+		const cases = [
+			{
+				host: {
+					type: HostAddressType.IP_ADDRESS,
+					address: [192, 168, 1, 77],
+				},
+				port: 47808,
+			},
+			{ host: { type: HostAddressType.NONE }, port: 47809 },
+			{
+				host: { type: HostAddressType.NAME, name: 'bbmd.example.com' },
+				port: 47808,
+			},
+		]
+		for (const value of cases) {
+			const buffer: EncodeBuffer = {
+				buffer: Buffer.alloc(64),
+				offset: 0,
+			}
+			baAsn1.encodeHostNPort(buffer, value as any)
+			const decoded = baAsn1.decodeHostNPort(
+				buffer.buffer,
+				0,
+				buffer.offset,
+			)
+			assert.ok(decoded, 'decode must succeed')
+			assert.strictEqual(decoded.len, buffer.offset)
+			assert.strictEqual(decoded.value.port, value.port)
+			assert.strictEqual(decoded.value.host.type, value.host.type)
+			if ('address' in value.host) {
+				assert.deepStrictEqual(
+					decoded.value.host.address,
+					value.host.address,
+				)
+			}
+			if ('name' in value.host) {
+				assert.strictEqual(decoded.value.host.name, value.host.name)
+			}
+			// The generic application-data decoder must route
+			// FD_BBMD_Address through the HostNPort decoder.
+			const generic = baAsn1.bacappDecodeApplicationData(
+				buffer.buffer,
+				0,
+				buffer.offset,
+				56,
+				PropertyIdentifier.FD_BBMD_ADDRESS,
+			)
+			assert.ok(generic)
+			assert.deepStrictEqual(generic.value, decoded.value)
+		}
+	})
 
 	await t.test('a fitting response is sent as ComplexACK', () => {
 		const { client, sent } = createStubClient()

@@ -34,6 +34,7 @@ import {
 	BACNetRawDate,
 	LogRecord,
 	LogRecordValue,
+	BACNetHostNPort,
 } from './types'
 import {
 	CharacterStringEncoding,
@@ -50,6 +51,7 @@ import {
 	ASN1_MAX_PROPERTY_ID,
 	ASN1_MAX_APPLICATION_TAG,
 	TimeStamp,
+	HostAddressType,
 } from './enum'
 
 const trace = debugLib('bacnet:asn1:trace')
@@ -794,6 +796,85 @@ const encodeCovSubscription = (
 	}
 }
 
+/**
+ * Encodes a BACnetHostNPort (ASHRAE 135-2020 Clause 21):
+ * host [0] BACnetHostAddress (CHOICE: none [0] NULL, ip-address [1]
+ * OCTET STRING, name [2] CharacterString), port [1] Unsigned16.
+ */
+export const encodeHostNPort = (
+	buffer: EncodeBuffer,
+	value: BACNetHostNPort,
+): void => {
+	encodeOpeningTag(buffer, 0)
+	const host = value.host ?? { type: HostAddressType.NONE }
+	switch (host.type) {
+		case HostAddressType.IP_ADDRESS: {
+			const address = host.address ?? []
+			encodeTag(buffer, 1, true, address.length)
+			encodeOctetString(buffer, address, 0, address.length)
+			break
+		}
+		case HostAddressType.NAME:
+			encodeContextCharacterString(buffer, 2, host.name ?? '')
+			break
+		default:
+			// none: context NULL is a zero-length context tag
+			encodeTag(buffer, 0, true, 0)
+			break
+	}
+	encodeClosingTag(buffer, 0)
+	encodeContextUnsigned(buffer, 1, value.port)
+}
+
+/** Decodes a BACnetHostNPort; see `encodeHostNPort` for the structure. */
+export const decodeHostNPort = (
+	buffer: Buffer,
+	offset: number,
+	maxOffset: number,
+): Decode<BACNetHostNPort> | undefined => {
+	let len = 0
+	if (!decodeIsOpeningTagNumber(buffer, offset + len, 0)) return undefined
+	len++
+	const hostTag = decodeTagNumberAndValue(buffer, offset + len)
+	if (!hostTag) return undefined
+	let host: BACNetHostNPort['host']
+	if (hostTag.tagNumber === 0) {
+		len += hostTag.len
+		host = { type: HostAddressType.NONE }
+	} else if (hostTag.tagNumber === 1) {
+		len += hostTag.len
+		const octets = decodeOctetString(
+			buffer,
+			offset + len,
+			maxOffset,
+			0,
+			hostTag.value,
+		)
+		len += octets.len
+		host = { type: HostAddressType.IP_ADDRESS, address: octets.value }
+	} else if (hostTag.tagNumber === 2) {
+		len += hostTag.len
+		const name = decodeCharacterString(
+			buffer,
+			offset + len,
+			maxOffset - (offset + len),
+			hostTag.value,
+		)
+		len += name.len
+		host = { type: HostAddressType.NAME, name: name.value }
+	} else {
+		return undefined
+	}
+	if (!decodeIsClosingTagNumber(buffer, offset + len, 0)) return undefined
+	len++
+	const portTag = decodeTagNumberAndValue(buffer, offset + len)
+	if (!portTag || portTag.tagNumber !== 1) return undefined
+	len += portTag.len
+	const port = decodeUnsigned(buffer, offset + len, portTag.value)
+	len += port.len
+	return { len, value: { host, port: port.value } }
+}
+
 export const bacappEncodeApplicationData = (
 	buffer: EncodeBuffer,
 	value: BACNetEncodableAppData,
@@ -804,6 +885,9 @@ export const bacappEncodeApplicationData = (
 	switch (value.type) {
 		case ApplicationTag.NULL:
 			encodeApplicationNull(buffer)
+			break
+		case ApplicationTag.HOST_N_PORT:
+			encodeHostNPort(buffer, value.value)
 			break
 		case ApplicationTag.BOOLEAN:
 			encodeApplicationBoolean(buffer, value.value)
@@ -3153,6 +3237,15 @@ const bacappDecodeContextApplicationData = (
 			if (!result) return undefined
 			return {
 				type: ApplicationTag.CONTEXT_SPECIFIC_DECODED,
+				value: result.value,
+				len: result.len,
+			}
+		}
+		if (propertyId === PropertyIdentifier.FD_BBMD_ADDRESS) {
+			const result = decodeHostNPort(buffer, offset, maxOffset)
+			if (!result) return undefined
+			return {
+				type: ApplicationTag.HOST_N_PORT,
 				value: result.value,
 				len: result.len,
 			}
