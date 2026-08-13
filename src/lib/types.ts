@@ -610,6 +610,46 @@ export interface WhoIsOptions {
 }
 
 /**
+ * Outcome summary of a locally initiated confirmed-request transaction,
+ * emitted as the `transaction` event. Purely observational (certification
+ * and diagnostics UIs); protocol handling is unaffected. The reject/abort
+ * distinction mirrors the received PDU type.
+ */
+export interface ConfirmedTransactionOutcome {
+	service: number
+	invokeId: number
+	/** Normalized link key (`ip:port`) the transaction was correlated on. */
+	link: string
+	/** Receiver address exactly as passed by the caller. */
+	receiver?: BACNetAddress
+	disposition: 'ack' | 'error' | 'reject' | 'abort' | 'timeout' | 'failed'
+	errorClass?: number
+	errorCode?: number
+	rejectReason?: number
+	abortReason?: number
+	/** True when the request itself was sent as a segmented transfer. */
+	segmentedRequest: boolean
+	/** True when the request advertised SEGMENTED_RESPONSE_ACCEPTED. */
+	acceptedSegmentedResponse: boolean
+	durationMs: number
+	/** Raw error message for non-protocol failures (`disposition: 'failed'`). */
+	errorMessage?: string
+}
+
+/**
+ * Options for sending a Who-Has request. Exactly one of `objectId` or
+ * `objectName` must be provided (ASHRAE 135 Clause 16.9: the object
+ * identifier and object name are a CHOICE). The optional device instance
+ * range limits which devices should answer, mirroring Who-Is.
+ */
+export interface WhoHasOptions {
+	lowLimit?: number
+	highLimit?: number
+	objectId?: BACNetObjectID
+	objectName?: string
+}
+
+/**
  * Caller-controlled transport options for sending a confirmed request as a
  * segmented transfer. The library never chooses segmentation on its own:
  * segmenting a request requires the caller to set `enabled: true` and to

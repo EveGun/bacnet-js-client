@@ -31,6 +31,7 @@ import ServicesMap, {
 	SubscribeCov,
 	SubscribeProperty,
 	TimeSync,
+	WhoHas,
 	WhoIs,
 	WriteProperty,
 	WritePropertyMultiple,
@@ -51,6 +52,8 @@ import {
 	TransportSettings,
 	ClientOptions,
 	WhoIsOptions,
+	WhoHasOptions,
+	ConfirmedTransactionOutcome,
 	ServiceOptions,
 	ReadPropertyOptions,
 	WritePropertyOptions,
@@ -118,12 +121,14 @@ import {
 	PDU_TYPE_MASK,
 	ErrorClass,
 	ErrorCode,
+	RejectReason,
 	BvlcResultFormat,
 	NpduControlBit,
 	MaxSegmentsAccepted,
 	MaxApduLengthAccepted,
 	AbortReason,
 	ASN1_ARRAY_ALL,
+	ASN1_MAX_INSTANCE,
 	ASN1_NO_PRIORITY,
 	PropertyIdentifier,
 	ReadRangeType,
@@ -162,6 +167,11 @@ const MAX_SEGMENT_WINDOW_SIZE = 127
 const DEFAULT_SEGMENT_MAX_RETRIES = 3
 // Scratch buffer for encoding a segmented service payload before splitting.
 const OUTGOING_SEGMENT_PAYLOAD_BUFFER_LENGTH = 1 << 20
+// Bookkeeping sentinel for _pendingRequestMaxSegments: the request was sent
+// with SEGMENTED_RESPONSE_ACCEPTED and max-segments B'000' (unspecified
+// maximum, ASHRAE 135 - 20.1.2.4). Distinct from SEGMENTS_0 without the
+// accept bit, which means "segmented responses not accepted".
+const ACCEPTED_SEGMENTED_RESPONSE_UNSPECIFIED_MAX = -1
 
 interface SegmentAssemblyState {
 	lastSequenceNumber: number | null
@@ -179,6 +189,9 @@ interface OutgoingSegmentTransaction {
 	invokeId: number
 	/** Local advertisement for the response, unchanged by segmentation */
 	maxSegments: number
+	/** Effective accepted-response bookkeeping value (see
+	 * ACCEPTED_SEGMENTED_RESPONSE_UNSPECIFIED_MAX) */
+	responseMaxSegments: number
 	maxApdu: number
 	/** PDU type octet without segmentation bits */
 	baseType: number
@@ -553,6 +566,39 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		}
 	}
 
+	/**
+	 * Like `_getApduBuffer`, but sized so an oversized response can be
+	 * fully encoded and measured instead of overflowing the transport
+	 * buffer. Used by responder helpers to detect the need for an Abort
+	 * (BUFFER_OVERFLOW) per ASHRAE 135 - 5.4.5.3.
+	 */
+	private _getResponseBuffer(address?: BACNetAddress): EncodeBuffer {
+		const isForwarded: boolean = !!address?.forwardedFrom
+		return {
+			buffer: Buffer.alloc(OUTGOING_SEGMENT_PAYLOAD_BUFFER_LENGTH),
+			offset: isForwarded ? BVLC_FWD_HEADER_LENGTH : BVLC_HEADER_LENGTH,
+		}
+	}
+
+	/**
+	 * True when an encoded response APDU exceeds either the requester's
+	 * declared max-APDU-length-accepted or what fits in one transport
+	 * datagram (this library does not transmit segmented responses).
+	 */
+	private _responseExceedsLimits(
+		buffer: EncodeBuffer,
+		apduStart: number,
+		maxApduLength?: number,
+	): boolean {
+		const apduLength = buffer.offset - apduStart
+		const transportLimit = this._transport.getMaxPayload() - apduStart
+		const requesterLimit =
+			typeof maxApduLength === 'number' && maxApduLength > 0
+				? maxApduLength
+				: Infinity
+		return apduLength > Math.min(transportLimit, requesterLimit)
+	}
+
 	private _normalizeAddress(
 		address?: string,
 		strictPort = false,
@@ -626,18 +672,82 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		// happens before queueing so allocation skips queued ids too.
 		const linkKey = getLinkKey(args.receiver)
 		this._acquireInvokeId(linkKey, args.invokeId, args.service)
+		const startedAt = Date.now()
 		try {
+			let result: NetworkOpResult
 			if (isRoutedPeer(args.receiver)) {
 				// Routed destinations share one serial transaction slot per
 				// link; direct peers keep full concurrency.
-				return await this._runSerializedOnLink(linkKey, () =>
+				result = await this._runSerializedOnLink(linkKey, () =>
 					this._dispatchConfirmedRequest(args),
 				)
+			} else {
+				result = await this._dispatchConfirmedRequest(args)
 			}
-			return await this._dispatchConfirmedRequest(args)
+			this._emitTransactionOutcome(args, linkKey, startedAt, null)
+			return result
+		} catch (err) {
+			this._emitTransactionOutcome(args, linkKey, startedAt, err as Error)
+			throw err
 		} finally {
 			this._releaseInvokeId(linkKey, args.invokeId)
 		}
+	}
+
+	/**
+	 * Emits the observational `transaction` event describing how a locally
+	 * initiated confirmed request concluded. The disposition is derived
+	 * from the library's own error message formats, so protocol handling
+	 * is untouched.
+	 */
+	private _emitTransactionOutcome(
+		args: {
+			receiver: BACNetAddress
+			service: ConfirmedServiceChoice
+			invokeId: number
+			acceptSegmentedResponse?: boolean
+			segmentedRequest?: SegmentedRequestOptions
+		},
+		link: string,
+		startedAt: number,
+		err: Error | null,
+	): void {
+		if (this.listenerCount('transaction') === 0) return
+		const outcome: ConfirmedTransactionOutcome = {
+			service: args.service,
+			invokeId: args.invokeId,
+			link,
+			receiver: args.receiver,
+			disposition: 'ack',
+			segmentedRequest: !!args.segmentedRequest?.enabled,
+			acceptedSegmentedResponse: !!args.acceptSegmentedResponse,
+			durationMs: Date.now() - startedAt,
+		}
+		if (err) {
+			const message = err.message || String(err)
+			let match: RegExpMatchArray | null
+			if (
+				(match = message.match(
+					/^BacnetError - Class:(\d+) - Code:(\d+)/,
+				))
+			) {
+				outcome.disposition = 'error'
+				outcome.errorClass = Number(match[1])
+				outcome.errorCode = Number(match[2])
+			} else if ((match = message.match(/^BacnetReject - Reason:(\d+)/))) {
+				outcome.disposition = 'reject'
+				outcome.rejectReason = Number(match[1])
+			} else if ((match = message.match(/^BacnetAbort - Reason:(\d+)/))) {
+				outcome.disposition = 'abort'
+				outcome.abortReason = Number(match[1])
+			} else if (message === 'ERR_TIMEOUT') {
+				outcome.disposition = 'timeout'
+			} else {
+				outcome.disposition = 'failed'
+				outcome.errorMessage = message
+			}
+		}
+		this.emit('transaction', outcome)
 	}
 
 	private async _dispatchConfirmedRequest(args: {
@@ -650,15 +760,27 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		segmentedRequest?: SegmentedRequestOptions
 		encodePayload: (buffer: EncodeBuffer) => void
 	}): Promise<NetworkOpResult> {
+		// ASHRAE 135 - 20.1.2.4: the SEGMENTED_RESPONSE_ACCEPTED bit is
+		// independent of max-segments-accepted; B'000' with the bit set
+		// means "accepted, unspecified maximum".
+		const acceptsSegmentedResponse = !!args.acceptSegmentedResponse
 		const baseType =
 			PduType.CONFIRMED_REQUEST |
-			(args.acceptSegmentedResponse &&
-			args.maxSegments !== MaxSegmentsAccepted.SEGMENTS_0
+			(acceptsSegmentedResponse
 				? PduConReqBit.SEGMENTED_RESPONSE_ACCEPTED
 				: 0)
+		const responseMaxSegments = acceptsSegmentedResponse
+			? args.maxSegments === MaxSegmentsAccepted.SEGMENTS_0
+				? ACCEPTED_SEGMENTED_RESPONSE_UNSPECIFIED_MAX
+				: args.maxSegments
+			: MaxSegmentsAccepted.SEGMENTS_0
 
 		if (args.segmentedRequest?.enabled) {
-			return this._sendSegmentedConfirmedRequest(args, baseType)
+			return this._sendSegmentedConfirmedRequest(
+				args,
+				baseType,
+				responseMaxSegments,
+			)
 		}
 
 		const buffer = this._getApduBuffer(args.receiver)
@@ -750,7 +872,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		return this._awaitResponse(
 			args.receiver,
 			args.invokeId,
-			args.maxSegments,
+			responseMaxSegments,
 		)
 	}
 
@@ -765,6 +887,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			encodePayload: (buffer: EncodeBuffer) => void
 		},
 		baseType: number,
+		responseMaxSegments: number,
 	): Promise<NetworkOpResult> {
 		const seg = args.segmentedRequest
 		const remoteMax = seg.remoteMaxApduLength
@@ -933,7 +1056,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			return this._awaitResponse(
 				args.receiver,
 				args.invokeId,
-				args.maxSegments,
+				responseMaxSegments,
 			)
 		}
 
@@ -965,6 +1088,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			service: args.service,
 			invokeId: args.invokeId,
 			maxSegments: args.maxSegments,
+			responseMaxSegments,
 			maxApdu: args.maxApdu,
 			baseType,
 			payload: payload.buffer.subarray(0, payload.offset),
@@ -1053,7 +1177,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			state.responsePromise = this._awaitResponse(
 				state.receiver,
 				state.invokeId,
-				state.maxSegments,
+				state.responseMaxSegments,
 			)
 			// Guard against an unhandled rejection when the transfer
 			// phase fails first; the rejection is still observed by the
@@ -1309,8 +1433,16 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		invokeId: number,
 		reason: number,
 		header?: BACnetMessageHeader,
+		isReject = false,
 	) {
-		const err = new Error(`BacnetAbort - Reason:${reason}`)
+		// Reject and Abort are distinct PDU types (ASHRAE 135 - 5.4.1);
+		// keeping them apart lets callers and the `transaction` event
+		// report which one the peer actually sent.
+		const err = new Error(
+			isReject
+				? `BacnetReject - Reason:${reason}`
+				: `BacnetAbort - Reason:${reason}`,
+		)
 		this._failSegmentTransferOnTerminal(header, invokeId, err)
 		this._resolvePendingRequest(header, invokeId, err)
 	}
@@ -1652,6 +1784,14 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		const name = serviceMap[content.service]
 		if (!name) {
 			debug('Received unsupported service request:', content.service)
+			// ASHRAE 135 - 18.9 / 135.1 - 9.39.1: a confirmed request whose
+			// Service Choice is unknown or reserved shall elicit a
+			// Reject-PDU with reason UNRECOGNIZED_SERVICE. Unconfirmed
+			// requests are silently discarded (135.1 - 9.39.2).
+			this._rejectConfirmedServiceRequest(
+				content,
+				RejectReason.UNRECOGNIZED_SERVICE,
+			)
 			return
 		}
 
@@ -1698,10 +1838,42 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 				// we'll just log them and ignore them.
 				debug('Exception thrown when processing message:', e)
 				debug('Original message was', `${name}:`, content)
+				// 135.1 - 13.4.3/13.4.4: a malformed confirmed request
+				// (invalid tag, missing required parameter) shall elicit a
+				// Reject-PDU. INVALID_TAG is within the accepted reason set
+				// for all of these tests.
+				this._rejectConfirmedServiceRequest(
+					content,
+					RejectReason.INVALID_TAG,
+				)
 				return
 			}
 			if (!content.payload) {
+				this._rejectConfirmedServiceRequest(
+					content,
+					RejectReason.INVALID_TAG,
+				)
 				return debug('Received invalid', name, 'message')
+			}
+			// 135.1 - 13.4.5: extra trailing arguments after a fully decoded
+			// confirmed request shall elicit a Reject-PDU with reason
+			// TOO_MANY_ARGUMENTS. Only enforced when the decoder reports how
+			// many octets it consumed.
+			const consumed = (content.payload as { len?: number }).len
+			if (
+				content.header?.confirmedService &&
+				typeof consumed === 'number' &&
+				Number.isFinite(consumed) &&
+				consumed < length
+			) {
+				debug(
+					`Confirmed ${name} request has ${length - consumed} trailing octet(s)`,
+				)
+				this._rejectConfirmedServiceRequest(
+					content,
+					RejectReason.TOO_MANY_ARGUMENTS,
+				)
+				return
 			}
 		} else {
 			debug('No serviceHandler defined for:', name)
@@ -1728,23 +1900,45 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 					)}`,
 				)
 				if (content.header?.expectingReply) {
-					debug('Replying with error for unhandled service:', name)
-					// Make sure we don't reply pretending to be the caller, if we got a
-					// forwarded message!  Really this should be overridden to be your
-					// own IP, but only if it's not null/undefined to begin with.
-					if (content.header.sender) {
-						content.header.sender.forwardedFrom = null
-					}
-					this.errorResponse(
-						content.header.sender,
-						content.service,
-						confirmedMsg.invokeId,
-						ErrorClass.SERVICES,
-						ErrorCode.REJECT_UNRECOGNIZED_SERVICE,
+					debug('Replying with reject for unhandled service:', name)
+					// ASHRAE 135 - 18.9: a confirmed request for a service the
+					// device does not execute elicits a Reject-PDU with reason
+					// UNRECOGNIZED_SERVICE (135.1 - 9.39.1 does not accept an
+					// Error-PDU here).
+					this._rejectConfirmedServiceRequest(
+						content,
+						RejectReason.UNRECOGNIZED_SERVICE,
 					)
 				}
 			}
 		}
+	}
+
+	/**
+	 * Sends a Reject-PDU for a confirmed service request, unwrapping any
+	 * BBMD forwarding so the reply is not sent pretending to be the
+	 * original caller. Unconfirmed requests are ignored (no reply
+	 * primitive exists for them).
+	 */
+	private _rejectConfirmedServiceRequest(
+		content: ServiceMessage,
+		reason: RejectReason,
+	): void {
+		const confirmedMsg = content as Partial<ConfirmedServiceRequest> &
+			BACnetMessageBase
+		if (
+			!content.header?.confirmedService ||
+			confirmedMsg.invokeId === undefined ||
+			!content.header.sender
+		) {
+			return
+		}
+		content.header.sender.forwardedFrom = null
+		this.rejectResponse(
+			content.header.sender,
+			confirmedMsg.invokeId,
+			reason,
+		)
 	}
 
 	private _handlePdu(
@@ -1883,7 +2077,12 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			case PduType.ABORT:
 				msg = baApdu.decodeAbort(buffer, offset) as Abort &
 					BACnetMessageBase
-				this._processAbort(msg.invokeId, msg.reason, header)
+				this._processAbort(
+					msg.invokeId,
+					msg.reason,
+					header,
+					(header.apduType & PDU_TYPE_MASK) === PduType.REJECT,
+				)
 				break
 
 			case PduType.CONFIRMED_REQUEST:
@@ -2055,6 +2254,17 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 						'Received invalid registerForeignDevice message',
 					)
 				}
+				if (this.listenerCount('registerForeignDevice') === 0) {
+					// ASHRAE 135 Annex J.2.5: a device that is not a BBMD
+					// shall NAK foreign-device registration attempts. With a
+					// listener attached, responding becomes the listener's
+					// responsibility.
+					this.resultResponse(
+						header.sender,
+						BvlcResultFormat.REGISTER_FOREIGN_DEVICE_NAK,
+					)
+					break
+				}
 				this.emit('registerForeignDevice', {
 					header,
 					payload: decodeResult,
@@ -2063,11 +2273,39 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			}
 
 			case BvlcResultPurpose.DISTRIBUTE_BROADCAST_TO_NETWORK:
-				this._handleNpdu(
-					buffer,
-					result.len,
-					buffer.length - result.len,
-					header,
+				// ASHRAE 135 Annex J.2.9: only a BBMD distributes these;
+				// any other device shall return a BVLC-Result NAK.
+				this.resultResponse(
+					header.sender,
+					BvlcResultFormat.DISTRIBUTE_BROADCAST_TO_NETWORK_NAK,
+				)
+				break
+
+			// ASHRAE 135 Annex J.2: BBMD administration functions. This
+			// library never acts as a BBMD, so each one is NAKed instead of
+			// silently dropped (135.1 BVLC negative tests expect the NAK).
+			case BvlcResultPurpose.WRITE_BROADCAST_DISTRIBUTION_TABLE:
+				this.resultResponse(
+					header.sender,
+					BvlcResultFormat.WRITE_BROADCAST_DISTRIBUTION_TABLE_NAK,
+				)
+				break
+			case BvlcResultPurpose.READ_BROADCAST_DISTRIBUTION_TABLE:
+				this.resultResponse(
+					header.sender,
+					BvlcResultFormat.READ_BROADCAST_DISTRIBUTION_TABLE_NAK,
+				)
+				break
+			case BvlcResultPurpose.READ_FOREIGN_DEVICE_TABLE:
+				this.resultResponse(
+					header.sender,
+					BvlcResultFormat.READ_FOREIGN_DEVICE_TABLE_NAK,
+				)
+				break
+			case BvlcResultPurpose.DELETE_FOREIGN_DEVICE_TABLE_ENTRY:
+				this.resultResponse(
+					header.sender,
+					BvlcResultFormat.DELETE_FOREIGN_DEVICE_TABLE_ENTRY_NAK,
 				)
 				break
 
@@ -2166,6 +2404,97 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			},
 			options,
 		)
+	}
+
+	/**
+	 * The whoHas command locates the device(s) containing a given object,
+	 * identified either by object identifier or by object name
+	 * (ASHRAE 135 Clause 16.9). Devices answer with I-Have.
+	 * @fires BACnetClient.iHave
+	 */
+	public whoHas(
+		receiverOrOptions?: BACNetAddress | WhoHasOptions,
+		options?: WhoHasOptions,
+	): void {
+		let receiver: BACNetAddress | undefined
+		if (!options) {
+			if (
+				receiverOrOptions &&
+				typeof receiverOrOptions === 'object' &&
+				('objectId' in receiverOrOptions ||
+					'objectName' in receiverOrOptions)
+			) {
+				options = receiverOrOptions as WhoHasOptions
+				receiverOrOptions = undefined
+			} else {
+				receiver = receiverOrOptions as BACNetAddress
+			}
+		} else {
+			receiver = receiverOrOptions as BACNetAddress
+		}
+
+		options = options || {}
+
+		const hasObjectId = !!(
+			options.objectId &&
+			Number.isFinite(options.objectId.type) &&
+			Number.isFinite(options.objectId.instance)
+		)
+		const hasObjectName =
+			typeof options.objectName === 'string' && options.objectName !== ''
+		if (hasObjectId === hasObjectName) {
+			throw new Error(
+				'whoHas requires exactly one of objectId or objectName',
+			)
+		}
+
+		const hasRange =
+			options.lowLimit !== undefined || options.highLimit !== undefined
+		if (
+			hasRange &&
+			!(
+				Number.isInteger(options.lowLimit) &&
+				Number.isInteger(options.highLimit) &&
+				options.lowLimit >= 0 &&
+				options.lowLimit <= ASN1_MAX_INSTANCE &&
+				options.highLimit >= 0 &&
+				options.highLimit <= ASN1_MAX_INSTANCE
+			)
+		) {
+			throw new Error(
+				'whoHas device instance range requires both lowLimit and highLimit in 0..4194303',
+			)
+		}
+
+		const buffer = this._getApduBuffer(receiver)
+		const npduDestination = receiver?.distributeBroadcastToNetwork
+			? undefined
+			: receiver
+
+		baNpdu.encode(
+			buffer,
+			NpduControlPriority.NORMAL_MESSAGE,
+			npduDestination,
+			null,
+			DEFAULT_HOP_COUNT,
+			NetworkLayerMessageType.WHO_IS_ROUTER_TO_NETWORK,
+			0,
+		)
+
+		baApdu.encodeUnconfirmedServiceRequest(
+			buffer,
+			PduType.UNCONFIRMED_REQUEST,
+			UnconfirmedServiceChoice.WHO_HAS,
+		)
+
+		WhoHas.encode(
+			buffer,
+			hasRange ? options.lowLimit : -1,
+			hasRange ? options.highLimit : -1,
+			options.objectId ?? { type: 0, instance: 0 },
+			hasObjectName ? options.objectName : undefined,
+		)
+		this.sendBvlc(receiver, buffer)
 	}
 
 	/**
@@ -2746,6 +3075,8 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			maxSegments: settings.maxSegments,
 			maxApdu: settings.maxApdu,
 			invokeId: settings.invokeId,
+			// Trend buffers routinely exceed one APDU; accept segmented ACKs.
+			acceptSegmentedResponse: true,
 			segmentedRequest: options.segmentedRequest,
 			encodePayload: (buffer) =>
 				ReadRange.encode(
@@ -3037,6 +3368,8 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			maxSegments: settings.maxSegments,
 			maxApdu: settings.maxApdu,
 			invokeId: settings.invokeId,
+			// Alarm summaries can exceed one APDU; accept segmented ACKs.
+			acceptSegmentedResponse: true,
 			segmentedRequest: options.segmentedRequest,
 			encodePayload: () => {},
 		})
@@ -3086,6 +3419,8 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 				maxSegments: settings.maxSegments,
 				maxApdu: settings.maxApdu,
 				invokeId,
+				// Event summaries can exceed one APDU; accept segmented ACKs.
+				acceptSegmentedResponse: true,
 				segmentedRequest: options.segmentedRequest,
 				encodePayload: (buffer) => {
 					if (currentObjectId) {
@@ -3242,6 +3577,8 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			maxSegments: settings.maxSegments,
 			maxApdu: settings.maxApdu,
 			invokeId: settings.invokeId,
+			// Enrollment summaries can exceed one APDU; accept segmented ACKs.
+			acceptSegmentedResponse: true,
 			segmentedRequest: options.segmentedRequest,
 			encodePayload: (buffer) =>
 				GetEnrollmentSummary.encode(
@@ -3323,10 +3660,11 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		objectId: BACNetObjectID,
 		property: BACNetPropertyID,
 		value: BACNetAppData[] | BACNetAppData,
-		options: { forwardedFrom?: string } = {},
+		options: { forwardedFrom?: string; maxApduLength?: number } = {},
 	): void {
-		const buffer = this._getApduBuffer(receiver)
+		const buffer = this._getResponseBuffer(receiver)
 		baNpdu.encode(buffer, NpduControlPriority.NORMAL_MESSAGE, receiver)
+		const apduStart = buffer.offset
 		baApdu.encodeComplexAck(
 			buffer,
 			PduType.COMPLEX_ACK,
@@ -3343,6 +3681,19 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			property.index,
 			valueArray,
 		)
+		if (
+			this._responseExceedsLimits(
+				buffer,
+				apduStart,
+				options.maxApduLength,
+			)
+		) {
+			return this.abortResponse(
+				receiver,
+				invokeId,
+				AbortReason.BUFFER_OVERFLOW,
+			)
+		}
 		this.sendBvlc(receiver, buffer)
 	}
 
@@ -3353,9 +3704,11 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		receiver: BACNetAddress,
 		invokeId: number,
 		values: BACNetReadAccess[],
+		options: { maxApduLength?: number } = {},
 	): void {
-		const buffer = this._getApduBuffer(receiver)
+		const buffer = this._getResponseBuffer(receiver)
 		baNpdu.encode(buffer, NpduControlPriority.NORMAL_MESSAGE, receiver)
+		const apduStart = buffer.offset
 		baApdu.encodeComplexAck(
 			buffer,
 			PduType.COMPLEX_ACK,
@@ -3363,6 +3716,19 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			invokeId,
 		)
 		ReadPropertyMultiple.encodeAcknowledge(buffer, values)
+		if (
+			this._responseExceedsLimits(
+				buffer,
+				apduStart,
+				options.maxApduLength,
+			)
+		) {
+			return this.abortResponse(
+				receiver,
+				invokeId,
+				AbortReason.BUFFER_OVERFLOW,
+			)
+		}
 		this.sendBvlc(receiver, buffer)
 	}
 
