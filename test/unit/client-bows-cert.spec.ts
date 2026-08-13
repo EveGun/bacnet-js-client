@@ -216,9 +216,15 @@ test('bacnet - segmented response acceptance advertisement', async (t) => {
 		async () => {
 			const { client, sent } = createStubClient()
 			const promise = client
-				.readRange({ address: DEVICE_A }, { type: 20, instance: 1 }, 1, 10, {
-					invokeId: 3,
-				})
+				.readRange(
+					{ address: DEVICE_A },
+					{ type: 20, instance: 1 },
+					1,
+					10,
+					{
+						invokeId: 3,
+					},
+				)
 				.catch(() => {})
 			assert.strictEqual(sent.length, 1)
 			const data = sent[0].data
@@ -405,26 +411,29 @@ test('bacnet - server-side reject behaviour (135.1 9.39.1 / 13.4.x)', async (t) 
 		},
 	)
 
-	await t.test('malformed confirmed request elicits Reject INVALID_TAG', () => {
-		const { client, sent } = createStubClient()
-		client.on('readProperty', () => {})
-		// Truncated ReadProperty payload: a lone context tag 0 with a
-		// declared 4-octet object id but no content.
-		injectConfirmedRequest(
-			client,
-			ConfirmedServiceChoice.READ_PROPERTY,
-			44,
-			(apdu) => {
-				apdu.buffer[apdu.offset++] = 0x0c
-			},
-		)
-		assert.strictEqual(sent.length, 1)
-		const { pduType, data, apduOffset } = decodeSentPdu(sent[0].data)
-		assert.strictEqual(pduType, PduType.REJECT)
-		const abort = baApdu.decodeAbort(data, apduOffset)
-		assert.strictEqual(abort.invokeId, 44)
-		assert.strictEqual(abort.reason, RejectReason.INVALID_TAG)
-	})
+	await t.test(
+		'malformed confirmed request elicits Reject INVALID_TAG',
+		() => {
+			const { client, sent } = createStubClient()
+			client.on('readProperty', () => {})
+			// Truncated ReadProperty payload: a lone context tag 0 with a
+			// declared 4-octet object id but no content.
+			injectConfirmedRequest(
+				client,
+				ConfirmedServiceChoice.READ_PROPERTY,
+				44,
+				(apdu) => {
+					apdu.buffer[apdu.offset++] = 0x0c
+				},
+			)
+			assert.strictEqual(sent.length, 1)
+			const { pduType, data, apduOffset } = decodeSentPdu(sent[0].data)
+			assert.strictEqual(pduType, PduType.REJECT)
+			const abort = baApdu.decodeAbort(data, apduOffset)
+			assert.strictEqual(abort.invokeId, 44)
+			assert.strictEqual(abort.reason, RejectReason.INVALID_TAG)
+		},
+	)
 
 	await t.test(
 		'trailing octets after a valid request elicit a Reject (135.1 13.4.5 accepts INVALID_TAG)',

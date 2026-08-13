@@ -167,6 +167,8 @@ const MAX_SEGMENT_WINDOW_SIZE = 127
 const DEFAULT_SEGMENT_MAX_RETRIES = 3
 // Scratch buffer for encoding a segmented service payload before splitting.
 const OUTGOING_SEGMENT_PAYLOAD_BUFFER_LENGTH = 1 << 20
+// ASHRAE 135 Annex J: the maximum APDU length for BACnet/IP, in octets.
+const BACNET_IP_MAX_APDU_OCTETS = 1476
 // Bookkeeping sentinel for _pendingRequestMaxSegments: the request was sent
 // with SEGMENTED_RESPONSE_ACCEPTED and max-segments B'000' (unspecified
 // maximum, ASHRAE 135 - 20.1.2.4). Distinct from SEGMENTS_0 without the
@@ -734,7 +736,9 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 				outcome.disposition = 'error'
 				outcome.errorClass = Number(match[1])
 				outcome.errorCode = Number(match[2])
-			} else if ((match = message.match(/^BacnetReject - Reason:(\d+)/))) {
+			} else if (
+				(match = message.match(/^BacnetReject - Reason:(\d+)/))
+			) {
 				outcome.disposition = 'reject'
 				outcome.rejectReason = Number(match[1])
 			} else if ((match = message.match(/^BacnetAbort - Reason:(\d+)/))) {
@@ -3740,6 +3744,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		deviceId: number,
 		segmentation: number,
 		vendorId: number,
+		maxApdu?: number,
 	): void {
 		const buffer = this._getApduBuffer(receiver)
 		baNpdu.encode(buffer, NpduControlPriority.NORMAL_MESSAGE, receiver)
@@ -3751,7 +3756,11 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		IAm.encode(
 			buffer,
 			deviceId,
-			this._transport.getMaxPayload(),
+			// The I-Am carries Max-APDU-Length-ACCEPTED in octets, which must
+			// match the Device object's Max_APDU_Length_Accepted — for
+			// BACnet/IP the standard value is 1476 (Annex J), NOT the raw
+			// transport payload size.
+			maxApdu ?? BACNET_IP_MAX_APDU_OCTETS,
 			segmentation,
 			vendorId,
 		)
