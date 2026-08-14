@@ -429,15 +429,16 @@ class WriteProperty extends AbstractServices_1.BacnetService {
             instance: decodedValue.instance,
         };
         len += decodedValue.len;
+        if (!baAsn1.decodeIsContextTag(buffer, offset + len, 1))
+            return undefined;
         result = baAsn1.decodeTagNumberAndValue(buffer, offset + len);
         len += result.len;
-        if (result.tagNumber !== 1)
-            return undefined;
         decodedValue = baAsn1.decodeEnumerated(buffer, offset + len, result.value);
         len += decodedValue.len;
         value.property.id = decodedValue.value;
         result = baAsn1.decodeTagNumberAndValue(buffer, offset + len);
-        if (result.tagNumber === 2) {
+        if (result.tagNumber === 2 &&
+            baAsn1.decodeIsContextTag(buffer, offset + len, 2)) {
             len += result.len;
             decodedValue = baAsn1.decodeUnsigned(buffer, offset + len, result.value);
             len += decodedValue.len;
@@ -466,7 +467,8 @@ class WriteProperty extends AbstractServices_1.BacnetService {
         value.priority = enum_1.ASN1_MAX_PRIORITY;
         if (len < apduLen) {
             result = baAsn1.decodeTagNumberAndValue(buffer, offset + len);
-            if (result.tagNumber === 4) {
+            if (result.tagNumber === 4 &&
+                baAsn1.decodeIsContextTag(buffer, offset + len, 4)) {
                 len += result.len;
                 decodedValue = baAsn1.decodeUnsigned(buffer, offset + len, result.value);
                 len += decodedValue.len;
