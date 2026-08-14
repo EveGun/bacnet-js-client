@@ -7,7 +7,7 @@ import * as baBvlc from '../../src/lib/bvlc'
 import * as baNpdu from '../../src/lib/npdu'
 import * as baApdu from '../../src/lib/apdu'
 import * as baAsn1 from '../../src/lib/asn1'
-import { ReadProperty, WhoHas } from '../../src/lib/services'
+import { ReadProperty, WhoHas, WriteProperty } from '../../src/lib/services'
 import {
 	AbortReason,
 	ApplicationTag,
@@ -696,4 +696,84 @@ test('bacnet - responder overflow protection (135.1 9.18.1.6)', async (t) => {
 		const { pduType } = decodeSentPdu(sent[0].data)
 		assert.strictEqual(pduType, PduType.COMPLEX_ACK)
 	})
+})
+
+test('bacnet - WriteProperty decoder enforces context-class tags (135.1 13.4.3)', async (t) => {
+	function buildValidWp(apdu: EncodeBuffer) {
+		WriteProperty.encode(apdu, 2, 1, 85, 0xffffffff, 16, [
+			{ type: ApplicationTag.REAL, value: 21.5 },
+		] as any)
+	}
+
+	await t.test('valid request with listener dispatches normally', () => {
+		const { client, sent } = createStubClient()
+		const seen: any[] = []
+		client.on('writeProperty', (msg: any) => seen.push(msg))
+		injectConfirmedRequest(
+			client,
+			ConfirmedServiceChoice.WRITE_PROPERTY,
+			60,
+			buildValidWp,
+		)
+		assert.strictEqual(seen.length, 1)
+		assert.strictEqual(sent.length, 0)
+	})
+
+	await t.test(
+		'application-class property tag elicits Reject INVALID_TAG',
+		() => {
+			const { client, sent } = createStubClient()
+			client.on('writeProperty', () => {})
+			injectConfirmedRequest(
+				client,
+				ConfirmedServiceChoice.WRITE_PROPERTY,
+				61,
+				(apdu) => {
+					const b = apdu.buffer
+					b[apdu.offset++] = 0x0c // context 0, object id
+					b.writeUInt32BE((2 << 22) | 1, apdu.offset)
+					apdu.offset += 4
+					b[apdu.offset++] = 0x19 // APPLICATION enumerated, not context 1
+					b[apdu.offset++] = 85
+				},
+			)
+			assert.strictEqual(sent.length, 1)
+			const { pduType, data, apduOffset } = decodeSentPdu(sent[0].data)
+			assert.strictEqual(pduType, PduType.REJECT)
+			assert.strictEqual(
+				baApdu.decodeAbort(data, apduOffset).reason,
+				RejectReason.INVALID_TAG,
+			)
+		},
+	)
+
+	await t.test(
+		'application-class priority tag after the value elicits a Reject',
+		() => {
+			const { client, sent } = createStubClient()
+			client.on('writeProperty', () => {})
+			injectConfirmedRequest(
+				client,
+				ConfirmedServiceChoice.WRITE_PROPERTY,
+				62,
+				(apdu) => {
+					buildValidWp(apdu)
+					// APPLICATION tag 4 (real) where context tag 4 (priority)
+					// would sit: must not be consumed as a priority.
+					apdu.buffer[apdu.offset++] = 0x44
+					apdu.buffer.writeFloatBE(1.0, apdu.offset)
+					apdu.offset += 4
+				},
+			)
+			assert.strictEqual(sent.length, 1)
+			const { pduType, data, apduOffset } = decodeSentPdu(sent[0].data)
+			assert.strictEqual(pduType, PduType.REJECT)
+			const reason = baApdu.decodeAbort(data, apduOffset).reason
+			assert.ok(
+				reason === RejectReason.TOO_MANY_ARGUMENTS ||
+					reason === RejectReason.INVALID_TAG,
+				`reason ${reason}`,
+			)
+		},
+	)
 })

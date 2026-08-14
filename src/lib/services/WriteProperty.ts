@@ -702,10 +702,13 @@ export default class WriteProperty extends BacnetService {
 		}
 
 		len += decodedValue.len
+		// Property identifier and optional array index are context tags 1
+		// and 2 (ASHRAE 135 - 15.9.1.1); an application-class tag with the
+		// same number is an invalid tag (135.1 - 13.4.3).
+		if (!baAsn1.decodeIsContextTag(buffer, offset + len, 1))
+			return undefined
 		result = baAsn1.decodeTagNumberAndValue(buffer, offset + len)
 		len += result.len
-
-		if (result.tagNumber !== 1) return undefined
 
 		decodedValue = baAsn1.decodeEnumerated(
 			buffer,
@@ -716,7 +719,10 @@ export default class WriteProperty extends BacnetService {
 		value.property.id = decodedValue.value
 
 		result = baAsn1.decodeTagNumberAndValue(buffer, offset + len)
-		if (result.tagNumber === 2) {
+		if (
+			result.tagNumber === 2 &&
+			baAsn1.decodeIsContextTag(buffer, offset + len, 2)
+		) {
 			len += result.len
 			decodedValue = baAsn1.decodeUnsigned(
 				buffer,
@@ -759,7 +765,10 @@ export default class WriteProperty extends BacnetService {
 
 		if (len < apduLen) {
 			result = baAsn1.decodeTagNumberAndValue(buffer, offset + len)
-			if (result.tagNumber === 4) {
+			if (
+				result.tagNumber === 4 &&
+				baAsn1.decodeIsContextTag(buffer, offset + len, 4)
+			) {
 				len += result.len
 				decodedValue = baAsn1.decodeUnsigned(
 					buffer,
