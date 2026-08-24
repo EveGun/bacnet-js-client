@@ -481,3 +481,59 @@ test.describe('bacnet - Services layer WritePropertyMultiple unit', () => {
 		assert.equal(result, undefined)
 	})
 })
+
+test.describe('bacnet - WritePropertyMultiple optional priority', () => {
+	test('an absent priority is omitted from the wire (no Unsigned 0)', () => {
+		const buffer = utils.getBuffer()
+		WritePropertyMultiple.encode(
+			buffer,
+			{ type: ObjectType.ANALOG_VALUE, instance: 2 },
+			[
+				{
+					property: {
+						id: PropertyIdentifier.HIGH_LIMIT,
+						index: 0xffffffff,
+					},
+					value: [{ type: ApplicationTag.REAL, value: 35 }],
+				} as any,
+			],
+		)
+		const result = WritePropertyMultiple.decode(
+			buffer.buffer,
+			0,
+			buffer.offset,
+		)
+		assert(result)
+		// Decoder reports "no priority" (ASN1_NO_PRIORITY = 0) — nothing was encoded.
+		assert.strictEqual(result.values[0].priority, 0)
+		// Byte-level: no context tag 3 follows the closing tag 2 of the value.
+		const bytes = buffer.buffer.subarray(0, buffer.offset)
+		assert.strictEqual(bytes[bytes.length - 1], 0x1f, 'ends with closing tag 1')
+		assert.strictEqual(bytes[bytes.length - 2], 0x2f, 'value closing tag 2 is last inside')
+	})
+
+	test('an explicit priority still encodes and decodes', () => {
+		const buffer = utils.getBuffer()
+		WritePropertyMultiple.encode(
+			buffer,
+			{ type: ObjectType.ANALOG_VALUE, instance: 2 },
+			[
+				{
+					property: {
+						id: PropertyIdentifier.PRESENT_VALUE,
+						index: 0xffffffff,
+					},
+					value: [{ type: ApplicationTag.REAL, value: 21 }],
+					priority: 16,
+				} as any,
+			],
+		)
+		const result = WritePropertyMultiple.decode(
+			buffer.buffer,
+			0,
+			buffer.offset,
+		)
+		assert(result)
+		assert.strictEqual(result.values[0].priority, 16)
+	})
+})

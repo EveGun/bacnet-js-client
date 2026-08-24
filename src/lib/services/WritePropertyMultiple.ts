@@ -93,8 +93,13 @@ export default class WritePropertyMultiple extends BacnetService {
 				pValue.value as any,
 			)
 			baAsn1.encodeClosingTag(buffer, 2)
-			if (pValue.priority !== ASN1_NO_PRIORITY) {
-				baAsn1.encodeContextUnsigned(buffer, 3, pValue.priority)
+			// Priority is OPTIONAL (BACnetWriteAccessSpecification): an absent
+			// value must stay off the wire entirely. Without the ?? guard an
+			// undefined priority passed the !== check and encoded as Unsigned 0,
+			// which is outside 1..16 and rejected by devices.
+			const priority = pValue.priority ?? ASN1_NO_PRIORITY
+			if (priority !== ASN1_NO_PRIORITY) {
+				baAsn1.encodeContextUnsigned(buffer, 3, priority)
 			}
 		})
 		baAsn1.encodeClosingTag(buffer, 1)

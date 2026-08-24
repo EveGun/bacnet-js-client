@@ -1305,7 +1305,7 @@ export interface DeviceObjectResult {
 export interface WritePropertyMultipleValue {
 	property: PropertyReference
 	value: BACNetWritePropertyValues
-	priority: number
+	priority?: number
 }
 
 export interface WritePropertyMultipleObject {
