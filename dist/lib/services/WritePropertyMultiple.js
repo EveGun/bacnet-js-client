@@ -86,8 +86,9 @@ class WritePropertyMultiple extends AbstractServices_1.BacnetService {
             baAsn1.encodeOpeningTag(buffer, 2);
             WriteProperty_1.default.encodePropertyValuePayload(buffer, objectId.type, pValue.property.id, propertyIndex, pValue.value);
             baAsn1.encodeClosingTag(buffer, 2);
-            if (pValue.priority !== enum_1.ASN1_NO_PRIORITY) {
-                baAsn1.encodeContextUnsigned(buffer, 3, pValue.priority);
+            const priority = pValue.priority ?? enum_1.ASN1_NO_PRIORITY;
+            if (priority !== enum_1.ASN1_NO_PRIORITY) {
+                baAsn1.encodeContextUnsigned(buffer, 3, priority);
             }
         });
         baAsn1.encodeClosingTag(buffer, 1);
