@@ -25,6 +25,7 @@ export default class WriteProperty extends BacnetService {
     private static encodeExceptionSchedulePayload;
     private static encodeEffectivePeriodPayload;
     static encodeCalendarDateListPayload(buffer: EncodeBuffer, values: BACNetCalendarDateListWriteValue, arrayIndex: number): void;
+    private static encodeStateChangeValuesPayload;
     static encodePropertyValuePayload(buffer: EncodeBuffer, objectType: number, propertyId: number, arrayIndex: number, values: BACNetWritePropertyValues): void;
     static encode(buffer: EncodeBuffer, objectType: number, objectInstance: number, propertyId: number, arrayIndex: number, priority: number, values: BACNetWritePropertyValues): void;
     static decode(buffer: Buffer, offset: number, apduLen: number): WritePropertyRequest | undefined;

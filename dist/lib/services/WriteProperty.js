@@ -380,6 +380,24 @@ class WriteProperty extends AbstractServices_1.BacnetService {
             }
         }
     }
+    static encodeStateChangeValuesPayload(buffer, values, arrayIndex) {
+        if (arrayIndex === 0) {
+            WriteProperty.encodeArrayLengthPayload(buffer, 'state change values', values);
+            return;
+        }
+        if (!Array.isArray(values)) {
+            throw new Error('Could not encode: state change values should be an array of BACnet application data');
+        }
+        for (const value of values) {
+            if (value?.type === enum_1.ApplicationTag.NO_VALUE) {
+                baAsn1.bacappEncodeApplicationData(buffer, value);
+                continue;
+            }
+            baAsn1.encodeOpeningTag(buffer, 1);
+            baAsn1.bacappEncodeApplicationData(buffer, value);
+            baAsn1.encodeClosingTag(buffer, 1);
+        }
+    }
     static encodePropertyValuePayload(buffer, objectType, propertyId, arrayIndex, values) {
         if (objectType === enum_1.ObjectType.SCHEDULE &&
             propertyId === enum_1.PropertyIdentifier.WEEKLY_SCHEDULE) {
@@ -399,6 +417,10 @@ class WriteProperty extends AbstractServices_1.BacnetService {
         if (objectType === enum_1.ObjectType.CALENDAR &&
             propertyId === enum_1.PropertyIdentifier.DATE_LIST) {
             WriteProperty.encodeCalendarDateListPayload(buffer, values, arrayIndex);
+            return;
+        }
+        if (propertyId === enum_1.PropertyIdentifier.STATE_CHANGE_VALUES) {
+            WriteProperty.encodeStateChangeValuesPayload(buffer, values, arrayIndex);
             return;
         }
         if (!Array.isArray(values)) {
