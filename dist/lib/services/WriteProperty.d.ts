@@ -1,4 +1,4 @@
-import { EncodeBuffer, WritePropertyRequest, BACNetWritePropertyValues } from '../types';
+import { EncodeBuffer, BACNetCalendarDateListWriteValue, WritePropertyRequest, BACNetWritePropertyValues } from '../types';
 import { BacnetService } from './AbstractServices';
 export default class WriteProperty extends BacnetService {
     private static validateRawDateByte;
@@ -24,7 +24,7 @@ export default class WriteProperty extends BacnetService {
     private static encodeExceptionDate;
     private static encodeExceptionSchedulePayload;
     private static encodeEffectivePeriodPayload;
-    private static encodeCalendarDateListPayload;
+    static encodeCalendarDateListPayload(buffer: EncodeBuffer, values: BACNetCalendarDateListWriteValue, arrayIndex: number): void;
     static encodePropertyValuePayload(buffer: EncodeBuffer, objectType: number, propertyId: number, arrayIndex: number, values: BACNetWritePropertyValues): void;
     static encode(buffer: EncodeBuffer, objectType: number, objectInstance: number, propertyId: number, arrayIndex: number, priority: number, values: BACNetWritePropertyValues): void;
     static decode(buffer: Buffer, offset: number, apduLen: number): WritePropertyRequest | undefined;

@@ -32,10 +32,14 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 const baAsn1 = __importStar(require("../asn1"));
 const enum_1 = require("../enum");
 const AbstractServices_1 = require("./AbstractServices");
+const WriteProperty_1 = __importDefault(require("./WriteProperty"));
 class AddListElement extends AbstractServices_1.BacnetService {
     static encode(buffer, objectId, propertyId, arrayIndex, values) {
         baAsn1.encodeContextObjectId(buffer, 0, objectId.type, objectId.instance);
@@ -44,7 +48,12 @@ class AddListElement extends AbstractServices_1.BacnetService {
             baAsn1.encodeContextUnsigned(buffer, 2, arrayIndex);
         }
         baAsn1.encodeOpeningTag(buffer, 3);
-        values.forEach((value) => baAsn1.bacappEncodeApplicationData(buffer, value));
+        if (propertyId === enum_1.PropertyIdentifier.DATE_LIST) {
+            WriteProperty_1.default.encodeCalendarDateListPayload(buffer, values, enum_1.ASN1_ARRAY_ALL);
+        }
+        else {
+            values.forEach((value) => baAsn1.bacappEncodeApplicationData(buffer, value));
+        }
         baAsn1.encodeClosingTag(buffer, 3);
     }
     static decode(buffer, offset, apduLen) {
