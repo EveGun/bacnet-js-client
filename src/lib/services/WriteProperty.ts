@@ -584,6 +584,43 @@ export default class WriteProperty extends BacnetService {
 		}
 	}
 
+	/**
+	 * Timer State_Change_Values (ARRAY[7] of BACnetTimerStateChangeValue).
+	 * The CHOICE has no bare application-datum alternative: ordinary datums
+	 * (including an application NULL) go in the constructed-value [1]
+	 * wrapper, and the no-value alternative is the bare [0] NULL (0x08) —
+	 * symmetric with the property-specific decode route.
+	 */
+	private static encodeStateChangeValuesPayload(
+		buffer: EncodeBuffer,
+		values: BACNetWritePropertyValues,
+		arrayIndex: number,
+	) {
+		if (arrayIndex === 0) {
+			WriteProperty.encodeArrayLengthPayload(
+				buffer,
+				'state change values',
+				values,
+			)
+			return
+		}
+		if (!Array.isArray(values)) {
+			throw new Error(
+				'Could not encode: state change values should be an array of BACnet application data',
+			)
+		}
+		for (const value of values as BACNetAppData[]) {
+			if (value?.type === ApplicationTag.NO_VALUE) {
+				// no-value CHOICE [0]: bare context NULL.
+				baAsn1.bacappEncodeApplicationData(buffer, value)
+				continue
+			}
+			baAsn1.encodeOpeningTag(buffer, 1)
+			baAsn1.bacappEncodeApplicationData(buffer, value)
+			baAsn1.encodeClosingTag(buffer, 1)
+		}
+	}
+
 	public static encodePropertyValuePayload(
 		buffer: EncodeBuffer,
 		objectType: number,
@@ -631,6 +668,14 @@ export default class WriteProperty extends BacnetService {
 			WriteProperty.encodeCalendarDateListPayload(
 				buffer,
 				values as BACNetCalendarDateListWriteValue,
+				arrayIndex,
+			)
+			return
+		}
+		if (propertyId === PropertyIdentifier.STATE_CHANGE_VALUES) {
+			WriteProperty.encodeStateChangeValuesPayload(
+				buffer,
+				values,
 				arrayIndex,
 			)
 			return
