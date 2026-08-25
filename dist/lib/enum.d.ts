@@ -1880,7 +1880,8 @@ export declare enum ApplicationTag {
     CONTEXT_SPECIFIC_DECODED = 118,
     CONTEXT_SPECIFIC_ENCODED = 119,
     LOG_RECORD = 120,
-    HOST_N_PORT = 121
+    HOST_N_PORT = 121,
+    NO_VALUE = 122
 }
 export declare enum HostAddressType {
     NONE = 0,

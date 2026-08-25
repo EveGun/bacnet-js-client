@@ -1989,6 +1989,7 @@ var ApplicationTag;
     ApplicationTag[ApplicationTag["CONTEXT_SPECIFIC_ENCODED"] = 119] = "CONTEXT_SPECIFIC_ENCODED";
     ApplicationTag[ApplicationTag["LOG_RECORD"] = 120] = "LOG_RECORD";
     ApplicationTag[ApplicationTag["HOST_N_PORT"] = 121] = "HOST_N_PORT";
+    ApplicationTag[ApplicationTag["NO_VALUE"] = 122] = "NO_VALUE";
 })(ApplicationTag || (exports.ApplicationTag = ApplicationTag = {}));
 var HostAddressType;
 (function (HostAddressType) {

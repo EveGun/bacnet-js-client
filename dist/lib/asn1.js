@@ -670,7 +670,7 @@ const decodeHostNPort = (buffer, offset, maxOffset) => {
 };
 exports.decodeHostNPort = decodeHostNPort;
 const bacappEncodeApplicationData = (buffer, value) => {
-    if (value.value === null) {
+    if (value.value === null && value.type !== enum_1.ApplicationTag.NO_VALUE) {
         value.type = enum_1.ApplicationTag.NULL;
     }
     switch (value.type) {
@@ -679,6 +679,12 @@ const bacappEncodeApplicationData = (buffer, value) => {
             break;
         case enum_1.ApplicationTag.HOST_N_PORT:
             (0, exports.encodeHostNPort)(buffer, value.value);
+            break;
+        case enum_1.ApplicationTag.OBJECT_PROPERTY_REFERENCE:
+            bacappEncodeDeviceObjPropertyRef(buffer, value.value);
+            break;
+        case enum_1.ApplicationTag.NO_VALUE:
+            (0, exports.encodeTag)(buffer, 0, true, 0);
             break;
         case enum_1.ApplicationTag.BOOLEAN:
             (0, exports.encodeApplicationBoolean)(buffer, value.value);
@@ -741,10 +747,11 @@ exports.bacappEncodeApplicationData = bacappEncodeApplicationData;
 const bacappEncodeDeviceObjPropertyRef = (buffer, value) => {
     (0, exports.encodeContextObjectId)(buffer, 0, value.objectId.type, value.objectId.instance);
     (0, exports.encodeContextEnumerated)(buffer, 1, value.id);
-    if (value.arrayIndex !== enum_1.ASN1_ARRAY_ALL) {
-        (0, exports.encodeContextUnsigned)(buffer, 2, value.arrayIndex);
+    const refArrayIndex = value.arrayIndex ?? enum_1.ASN1_ARRAY_ALL;
+    if (refArrayIndex !== enum_1.ASN1_ARRAY_ALL) {
+        (0, exports.encodeContextUnsigned)(buffer, 2, refArrayIndex);
     }
-    if (value.deviceIndentifier.type === enum_1.ObjectType.DEVICE) {
+    if (value.deviceIndentifier?.type === enum_1.ObjectType.DEVICE) {
         (0, exports.encodeContextObjectId)(buffer, 3, value.deviceIndentifier.type, value.deviceIndentifier.instance);
     }
 };
@@ -2356,6 +2363,10 @@ exports.decodeRange = decodeRange;
 const bacappDecodeContextApplicationData = (buffer, offset, maxOffset, objectType, propertyId) => {
     let len = 0;
     if (isContextSpecific(buffer[offset])) {
+        if (propertyId === enum_1.PropertyIdentifier.STATE_CHANGE_VALUES &&
+            buffer[offset] === 0x08) {
+            return { type: enum_1.ApplicationTag.NO_VALUE, value: null, len: 1 };
+        }
         if (propertyId === enum_1.PropertyIdentifier.LIST_OF_GROUP_MEMBERS) {
             const result = (0, exports.decodeReadAccessSpecification)(buffer, offset, maxOffset);
             if (!result)
