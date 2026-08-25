@@ -1663,11 +1663,12 @@ const decodeDeviceObjPropertyRef = (buffer, offset) => {
         const unsignedResult = (0, exports.decodeUnsigned)(buffer, offset + len, result.value);
         len += unsignedResult.len;
     }
+    let deviceObjectId;
     if ((0, exports.decodeIsContextTag)(buffer, offset + len, 3)) {
         if (!isClosingTag(buffer[offset + len])) {
             len++;
-            objectId = (0, exports.decodeObjectId)(buffer, offset + len);
-            len += objectId.len;
+            deviceObjectId = (0, exports.decodeObjectId)(buffer, offset + len);
+            len += deviceObjectId.len;
         }
     }
     return {
@@ -1675,6 +1676,14 @@ const decodeDeviceObjPropertyRef = (buffer, offset) => {
         value: {
             objectId,
             id,
+            ...(deviceObjectId
+                ? {
+                    deviceIndentifier: {
+                        type: deviceObjectId.objectType,
+                        instance: deviceObjectId.instance,
+                    },
+                }
+                : {}),
         },
     };
 };
