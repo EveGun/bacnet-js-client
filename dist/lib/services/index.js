@@ -69,6 +69,7 @@ const WritePropertyMultiple_1 = __importDefault(require("./WritePropertyMultiple
 exports.WritePropertyMultiple = WritePropertyMultiple_1.default;
 const ServicesMap = {
     addListElement: AddListElement_1.default,
+    removeListElement: AddListElement_1.default,
     alarmAcknowledge: AlarmAcknowledge_1.default,
     alarmSummary: AlarmSummary_1.default,
     atomicReadFile: AtomicReadFile_1.default,
