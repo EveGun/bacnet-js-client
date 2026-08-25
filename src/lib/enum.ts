@@ -2029,6 +2029,8 @@ export enum ApplicationTag {
 	CONTEXT_SPECIFIC_ENCODED = 119,
 	LOG_RECORD = 120,
 	HOST_N_PORT = 121,
+	/** BACnetTimerStateChangeValue no-value CHOICE (context [0] NULL). */
+	NO_VALUE = 122,
 }
 
 // ASHRAE 135-2020 - 21: BACnetHostAddress CHOICE discriminants

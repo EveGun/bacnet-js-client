@@ -403,6 +403,7 @@ export interface ApplicationTagValueTypeMap {
 	[ApplicationTag.CONTEXT_SPECIFIC_ENCODED]: any
 	[ApplicationTag.LOG_RECORD]: any
 	[ApplicationTag.HOST_N_PORT]: BACNetHostNPort
+	[ApplicationTag.NO_VALUE]: null
 }
 
 export interface BACNetPropertyState {

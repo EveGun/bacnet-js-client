@@ -879,7 +879,9 @@ export const bacappEncodeApplicationData = (
 	buffer: EncodeBuffer,
 	value: BACNetEncodableAppData,
 ): void => {
-	if (value.value === null) {
+	if (value.value === null && value.type !== ApplicationTag.NO_VALUE) {
+		// NO_VALUE is the timer CHOICE [0] NULL — it must not be downgraded
+		// to an application NULL by the null-coercion below.
 		value.type = ApplicationTag.NULL
 	}
 	switch (value.type) {
@@ -888,6 +890,17 @@ export const bacappEncodeApplicationData = (
 			break
 		case ApplicationTag.HOST_N_PORT:
 			encodeHostNPort(buffer, value.value)
+			break
+		case ApplicationTag.OBJECT_PROPERTY_REFERENCE:
+			// BACnetDeviceObjectPropertyReference as application data — used by
+			// writable LISTs such as List_Of_Object_Property_References
+			// (Schedule/Timer targets, SCHED-VM-A 13.10.x.2).
+			bacappEncodeDeviceObjPropertyRef(buffer, value.value as any)
+			break
+		case ApplicationTag.NO_VALUE:
+			// BACnetTimerStateChangeValue no-value CHOICE: context [0] NULL —
+			// deliberately distinct from an application NULL (relinquish).
+			encodeTag(buffer, 0, true, 0)
 			break
 		case ApplicationTag.BOOLEAN:
 			encodeApplicationBoolean(buffer, value.value)
@@ -973,10 +986,13 @@ const bacappEncodeDeviceObjPropertyRef = (
 		value.objectId.instance,
 	)
 	encodeContextEnumerated(buffer, 1, value.id)
-	if (value.arrayIndex !== ASN1_ARRAY_ALL) {
-		encodeContextUnsigned(buffer, 2, value.arrayIndex)
+	// arrayIndex and deviceIdentifier are OPTIONAL in the reference —
+	// tolerate their absence instead of crashing on undefined.
+	const refArrayIndex = value.arrayIndex ?? ASN1_ARRAY_ALL
+	if (refArrayIndex !== ASN1_ARRAY_ALL) {
+		encodeContextUnsigned(buffer, 2, refArrayIndex)
 	}
-	if (value.deviceIndentifier.type === ObjectType.DEVICE) {
+	if (value.deviceIndentifier?.type === ObjectType.DEVICE) {
 		encodeContextObjectId(
 			buffer,
 			3,
@@ -3184,6 +3200,13 @@ const bacappDecodeContextApplicationData = (
 ): ApplicationData | undefined => {
 	let len = 0
 	if (isContextSpecific(buffer[offset])) {
+		if (
+			propertyId === PropertyIdentifier.STATE_CHANGE_VALUES &&
+			buffer[offset] === 0x08
+		) {
+			// Timer no-value CHOICE: context tag [0], zero length.
+			return { type: ApplicationTag.NO_VALUE, value: null, len: 1 }
+		}
 		if (propertyId === PropertyIdentifier.LIST_OF_GROUP_MEMBERS) {
 			const result = decodeReadAccessSpecification(
 				buffer,
