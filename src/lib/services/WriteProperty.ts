@@ -540,7 +540,7 @@ export default class WriteProperty extends BacnetService {
 		}
 	}
 
-	private static encodeCalendarDateListPayload(
+	public static encodeCalendarDateListPayload(
 		buffer: EncodeBuffer,
 		values: BACNetCalendarDateListWriteValue,
 		arrayIndex: number,
