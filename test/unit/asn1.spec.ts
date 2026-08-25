@@ -484,4 +484,49 @@ test.describe('bacnet - ASN1 layer', () => {
 			)
 		})
 	})
+
+	test.describe('device object property reference decode', () => {
+		test('remote reference keeps the referenced object and surfaces the device', () => {
+			const buffer = { buffer: Buffer.alloc(100), offset: 0 }
+			baAsn1.bacappEncodeApplicationData(buffer, {
+				type: ApplicationTag.OBJECT_PROPERTY_REFERENCE,
+				value: {
+					objectId: { type: 4, instance: 7 },
+					id: 85,
+					deviceIndentifier: { type: 8, instance: 900001 },
+				},
+			} as any)
+			const decoded = baAsn1.bacappDecodeApplicationData(
+				buffer.buffer,
+				0,
+				buffer.offset,
+				20,
+				54,
+			) as any
+			assert.strictEqual(decoded.value.objectId.objectType, 4)
+			assert.strictEqual(decoded.value.objectId.instance, 7)
+			assert.strictEqual(decoded.value.id.value, 85)
+			assert.deepStrictEqual(decoded.value.deviceIndentifier, {
+				type: 8,
+				instance: 900001,
+			})
+		})
+
+		test('local reference has no device field', () => {
+			const buffer = { buffer: Buffer.alloc(100), offset: 0 }
+			baAsn1.bacappEncodeApplicationData(buffer, {
+				type: ApplicationTag.OBJECT_PROPERTY_REFERENCE,
+				value: { objectId: { type: 2, instance: 5 }, id: 85 },
+			} as any)
+			const decoded = baAsn1.bacappDecodeApplicationData(
+				buffer.buffer,
+				0,
+				buffer.offset,
+				20,
+				54,
+			) as any
+			assert.strictEqual(decoded.value.objectId.objectType, 2)
+			assert.strictEqual(decoded.value.deviceIndentifier, undefined)
+		})
+	})
 })

@@ -2201,11 +2201,15 @@ const decodeDeviceObjPropertyRef = (
 		)
 		len += unsignedResult.len
 	}
+	// [3] optional device identifier: a REMOTE reference. It must not
+	// overwrite the referenced object — it is surfaced as its own field
+	// (mirroring the encoder's deviceIndentifier input).
+	let deviceObjectId: ObjectId | undefined
 	if (decodeIsContextTag(buffer, offset + len, 3)) {
 		if (!isClosingTag(buffer[offset + len])) {
 			len++
-			objectId = decodeObjectId(buffer, offset + len)
-			len += objectId.len
+			deviceObjectId = decodeObjectId(buffer, offset + len)
+			len += deviceObjectId.len
 		}
 	}
 	return {
@@ -2213,6 +2217,14 @@ const decodeDeviceObjPropertyRef = (
 		value: {
 			objectId,
 			id,
+			...(deviceObjectId
+				? {
+						deviceIndentifier: {
+							type: deviceObjectId.objectType,
+							instance: deviceObjectId.instance,
+						},
+					}
+				: {}),
 		},
 	}
 }

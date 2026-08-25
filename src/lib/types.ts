@@ -519,6 +519,10 @@ export interface DeviceObjPropertyRef {
 	value: {
 		objectId: ObjectId
 		id: Decode<number>
+		/** Present when the reference names a remote device ([3] in
+		 * BACnetDeviceObjectPropertyReference). Field name matches the
+		 * encoder's (sic). */
+		deviceIndentifier?: BACNetObjectID
 	}
 }
 
