@@ -2376,6 +2376,25 @@ const bacappDecodeContextApplicationData = (buffer, offset, maxOffset, objectTyp
             buffer[offset] === 0x08) {
             return { type: enum_1.ApplicationTag.NO_VALUE, value: null, len: 1 };
         }
+        if (propertyId === enum_1.PropertyIdentifier.STATE_CHANGE_VALUES &&
+            buffer[offset] === 0x1e) {
+            let len = 1;
+            const inner = (0, exports.bacappDecodeApplicationData)(buffer, offset + len, maxOffset, objectType, propertyId);
+            if (inner && typeof inner.len === 'number') {
+                len += inner.len;
+                if ((0, exports.decodeIsClosingTagNumber)(buffer, offset + len, 1)) {
+                    len++;
+                    const result = {
+                        type: inner.type,
+                        value: inner.value,
+                        len,
+                    };
+                    if (inner.encoding !== undefined)
+                        result.encoding = inner.encoding;
+                    return result;
+                }
+            }
+        }
         if (propertyId === enum_1.PropertyIdentifier.LIST_OF_GROUP_MEMBERS) {
             const result = (0, exports.decodeReadAccessSpecification)(buffer, offset, maxOffset);
             if (!result)
