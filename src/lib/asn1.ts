@@ -3219,6 +3219,39 @@ const bacappDecodeContextApplicationData = (
 			// Timer no-value CHOICE: context tag [0], zero length.
 			return { type: ApplicationTag.NO_VALUE, value: null, len: 1 }
 		}
+		if (
+			propertyId === PropertyIdentifier.STATE_CHANGE_VALUES &&
+			buffer[offset] === 0x1e
+		) {
+			// BACnetTimerStateChangeValue constructed-value CHOICE [1]: one
+			// application datum wrapped in [1] tags. Decode to the inner datum
+			// so ordinary values keep their type — a [1]-wrapped ENUMERATED is
+			// still an ENUMERATED to every consumer.
+			let len = 1
+			const inner = bacappDecodeApplicationData(
+				buffer,
+				offset + len,
+				maxOffset,
+				objectType,
+				propertyId,
+			)
+			if (inner && typeof inner.len === 'number') {
+				len += inner.len
+				if (decodeIsClosingTagNumber(buffer, offset + len, 1)) {
+					len++
+					const result: ApplicationData = {
+						type: inner.type,
+						value: inner.value,
+						len,
+					}
+					if (inner.encoding !== undefined)
+						result.encoding = inner.encoding
+					return result
+				}
+			}
+			// Not a single-datum [1] group: fall through to the generic
+			// context decode below.
+		}
 		if (propertyId === PropertyIdentifier.LIST_OF_GROUP_MEMBERS) {
 			const result = decodeReadAccessSpecification(
 				buffer,

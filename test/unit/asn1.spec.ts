@@ -529,4 +529,43 @@ test.describe('bacnet - ASN1 layer', () => {
 			assert.strictEqual(decoded.value.deviceIndentifier, undefined)
 		})
 	})
+
+	test.describe('timer State_Change_Values decode', () => {
+		test('constructed-value CHOICE [1] decodes to the inner application datum', () => {
+			// [1] opening, ENUMERATED 1, [1] closing — then a plain ENUM 2.
+			const buf = Buffer.from([0x1e, 0x91, 0x01, 0x1f, 0x91, 0x02])
+			const first = baAsn1.bacappDecodeApplicationData(
+				buf,
+				0,
+				buf.length,
+				20,
+				396,
+			) as any
+			assert.strictEqual(first.type, ApplicationTag.ENUMERATED)
+			assert.strictEqual(first.value, 1)
+			assert.strictEqual(first.len, 4)
+			const second = baAsn1.bacappDecodeApplicationData(
+				buf,
+				first.len,
+				buf.length,
+				20,
+				396,
+			) as any
+			assert.strictEqual(second.type, ApplicationTag.ENUMERATED)
+			assert.strictEqual(second.value, 2)
+		})
+
+		test('no-value [0] NULL still decodes distinctly', () => {
+			const buf = Buffer.from([0x08])
+			const dec = baAsn1.bacappDecodeApplicationData(
+				buf,
+				0,
+				buf.length,
+				20,
+				396,
+			) as any
+			assert.strictEqual(dec.type, ApplicationTag.NO_VALUE)
+			assert.strictEqual(dec.value, null)
+		})
+	})
 })

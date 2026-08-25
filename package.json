@@ -1,6 +1,6 @@
 {
 	"name": "@bacnet-js/client",
-	"version": "3.3.2-evolo.12",
+	"version": "3.3.2-evolo.13",
 	"description": "A BACnet\u00ae protocol stack written in pure TypeScript.",
 	"main": "./dist/index.js",
 	"dependencies": {
