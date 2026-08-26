@@ -2191,15 +2191,18 @@ const decodeDeviceObjPropertyRef = (
 	const id = decodeEnumerated(buffer, offset + len, result.value)
 	len += id.len
 	result = decodeTagNumberAndValue(buffer, offset + len)
+	// [2] optional property array index — surfaced so a read reference
+	// round-trips losslessly (it was previously decoded and discarded).
+	let arrayIndex: number | undefined
 	if (result.tagNumber === 2) {
 		len += result.len
-		// FIXME: This doesn't seem to be used
 		const unsignedResult = decodeUnsigned(
 			buffer,
 			offset + len,
 			result.value,
 		)
 		len += unsignedResult.len
+		arrayIndex = unsignedResult.value
 	}
 	// [3] optional device identifier: a REMOTE reference. It must not
 	// overwrite the referenced object — it is surfaced as its own field
@@ -2217,6 +2220,7 @@ const decodeDeviceObjPropertyRef = (
 		value: {
 			objectId,
 			id,
+			...(arrayIndex !== undefined ? { arrayIndex } : {}),
 			...(deviceObjectId
 				? {
 						deviceIndentifier: {

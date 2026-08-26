@@ -568,4 +568,78 @@ test.describe('bacnet - ASN1 layer', () => {
 			assert.strictEqual(dec.value, null)
 		})
 	})
+
+	test.describe('BACnetDeviceObjectPropertyReference wire encoding', () => {
+		const encodeRef = (value: any) => {
+			const buffer = { buffer: Buffer.alloc(100), offset: 0 }
+			baAsn1.bacappEncodeApplicationData(buffer, {
+				type: ApplicationTag.OBJECT_PROPERTY_REFERENCE,
+				value,
+			} as any)
+			return [...buffer.buffer.subarray(0, buffer.offset)]
+		}
+
+		test('local reference: [0] objectId + [1] propertyId only', () => {
+			assert.deepStrictEqual(
+				encodeRef({ objectId: { type: 5, instance: 7301 }, id: 85 }),
+				// [0] binary-value,7301  [1] present-value
+				[0x0c, 0x01, 0x40, 0x1c, 0x85, 0x19, 0x55],
+			)
+		})
+
+		test('remote reference adds [3] device,123456 with correct context tagging', () => {
+			assert.deepStrictEqual(
+				encodeRef({
+					objectId: { type: 2, instance: 1 },
+					id: 85,
+					deviceIndentifier: { type: 8, instance: 123456 },
+				}),
+				// [0] analog-value,1  [1] present-value  [3] device,123456
+				[0x0c, 0x00, 0x80, 0x00, 0x01, 0x19, 0x55, 0x3c, 0x02, 0x01, 0xe2, 0x40],
+			)
+		})
+
+		test('array index goes as [2] between property and device', () => {
+			assert.deepStrictEqual(
+				encodeRef({
+					objectId: { type: 2, instance: 1 },
+					id: 87,
+					arrayIndex: 5,
+					deviceIndentifier: { type: 8, instance: 0 },
+				}),
+				// [0] analog-value,1  [1] priority-array  [2] 5  [3] device,0
+				[0x0c, 0x00, 0x80, 0x00, 0x01, 0x19, 0x57, 0x29, 0x05, 0x3c, 0x02, 0x00, 0x00, 0x00],
+			)
+		})
+
+		test('decode round-trips device instance 0, max instance and array index losslessly', () => {
+			for (const ref of [
+				{ objectId: { type: 2, instance: 1 }, id: 85, deviceIndentifier: { type: 8, instance: 0 } },
+				{ objectId: { type: 2, instance: 1 }, id: 85, deviceIndentifier: { type: 8, instance: 4194303 } },
+				{ objectId: { type: 5, instance: 7301 }, id: 87, arrayIndex: 3 },
+				{ objectId: { type: 5, instance: 7301 }, id: 85 },
+			]) {
+				const buffer = { buffer: Buffer.alloc(100), offset: 0 }
+				baAsn1.bacappEncodeApplicationData(buffer, {
+					type: ApplicationTag.OBJECT_PROPERTY_REFERENCE,
+					value: ref,
+				} as any)
+				const decoded = baAsn1.bacappDecodeApplicationData(
+					buffer.buffer,
+					0,
+					buffer.offset,
+					20,
+					54,
+				) as any
+				assert.strictEqual(decoded.value.objectId.objectType, ref.objectId.type)
+				assert.strictEqual(decoded.value.objectId.instance, ref.objectId.instance)
+				assert.strictEqual(decoded.value.id.value, ref.id)
+				assert.strictEqual(decoded.value.arrayIndex, (ref as any).arrayIndex)
+				assert.deepStrictEqual(
+					decoded.value.deviceIndentifier,
+					(ref as any).deviceIndentifier,
+				)
+			}
+		})
+	})
 })
