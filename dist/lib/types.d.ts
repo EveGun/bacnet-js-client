@@ -278,6 +278,7 @@ export interface DeviceObjPropertyRef {
     value: {
         objectId: ObjectId;
         id: Decode<number>;
+        arrayIndex?: number;
         deviceIndentifier?: BACNetObjectID;
     };
 }
