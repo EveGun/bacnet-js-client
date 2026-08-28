@@ -999,6 +999,12 @@ class BACnetClient extends EventTypes_1.TypedEventEmitter {
             ? `with invokeId ${confirmedMsg.invokeId}`
             : '';
         trace(`Received service request${id}:`, name);
+        if (!this.listenerCount(name) &&
+            !this.listenerCount('unhandledEvent')) {
+            debug('Received request for unsupported service:', name);
+            this._rejectConfirmedServiceRequest(content, enum_1.RejectReason.UNRECOGNIZED_SERVICE);
+            return;
+        }
         const serviceHandler = services_1.default[name];
         if (serviceHandler) {
             try {
