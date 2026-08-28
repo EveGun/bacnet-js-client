@@ -187,4 +187,25 @@ test.describe('bacnet - APDU layer', () => {
 			})
 		})
 	})
+
+	test.describe('confirmed-request max-segments-accepted encoding', () => {
+		test('SEGMENTS_64 encodes B\'110\' (64 segments) — consistent with a Max_Segments_Accepted of 64', () => {
+			const { MaxSegmentsAccepted, MaxApduLengthAccepted, PduType, ConfirmedServiceChoice } = require('../../src/lib/enum')
+			const buffer = utils.getBuffer()
+			baApdu.encodeConfirmedServiceRequest(
+				buffer,
+				PduType.CONFIRMED_REQUEST,
+				ConfirmedServiceChoice.READ_PROPERTY_MULTIPLE,
+				MaxSegmentsAccepted.SEGMENTS_64,
+				MaxApduLengthAccepted.OCTETS_1476,
+				42,
+				0,
+				0,
+			)
+			// Octet 2 packs max-segments (high nibble) | max-APDU (low nibble):
+			// B'110' = 64 segments, never B'111' (= "greater than 64").
+			assert.strictEqual(buffer.buffer[1] >> 4, 6)
+			assert.strictEqual(buffer.buffer[1], 0x65)
+		})
+	})
 })
