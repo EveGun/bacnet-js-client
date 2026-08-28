@@ -286,6 +286,11 @@ class BACnetClient extends EventTypes_1.TypedEventEmitter {
             offset: isForwarded ? BVLC_FWD_HEADER_LENGTH : BVLC_HEADER_LENGTH,
         };
     }
+    _responseOverflowReason(segmentedResponseAccepted) {
+        return segmentedResponseAccepted
+            ? enum_1.AbortReason.BUFFER_OVERFLOW
+            : enum_1.AbortReason.SEGMENTATION_NOT_SUPPORTED;
+    }
     _responseExceedsLimits(buffer, apduStart, maxApduLength) {
         const apduLength = buffer.offset - apduStart;
         const transportLimit = this._transport.getMaxPayload() - apduStart;
@@ -1929,7 +1934,7 @@ class BACnetClient extends EventTypes_1.TypedEventEmitter {
         const valueArray = Array.isArray(value) ? value : [value];
         services_1.ReadProperty.encodeAcknowledge(buffer, objectId, property.id, property.index, valueArray);
         if (this._responseExceedsLimits(buffer, apduStart, options.maxApduLength)) {
-            return this.abortResponse(receiver, invokeId, enum_1.AbortReason.BUFFER_OVERFLOW);
+            return this.abortResponse(receiver, invokeId, this._responseOverflowReason(options.segmentedResponseAccepted));
         }
         this.sendBvlc(receiver, buffer);
     }
@@ -1940,7 +1945,7 @@ class BACnetClient extends EventTypes_1.TypedEventEmitter {
         baApdu.encodeComplexAck(buffer, enum_1.PduType.COMPLEX_ACK, enum_1.ConfirmedServiceChoice.READ_PROPERTY_MULTIPLE, invokeId);
         services_1.ReadPropertyMultiple.encodeAcknowledge(buffer, values);
         if (this._responseExceedsLimits(buffer, apduStart, options.maxApduLength)) {
-            return this.abortResponse(receiver, invokeId, enum_1.AbortReason.BUFFER_OVERFLOW);
+            return this.abortResponse(receiver, invokeId, this._responseOverflowReason(options.segmentedResponseAccepted));
         }
         this.sendBvlc(receiver, buffer);
     }

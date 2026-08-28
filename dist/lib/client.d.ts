@@ -27,6 +27,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
     private _getPendingMaxSegments;
     private _getApduBuffer;
     private _getResponseBuffer;
+    private _responseOverflowReason;
     private _responseExceedsLimits;
     private _normalizeAddress;
     private _getPendingForeignDeviceRegistrations;
@@ -120,9 +121,11 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
     readPropertyResponse(receiver: BACNetAddress, invokeId: number, objectId: BACNetObjectID, property: BACNetPropertyID, value: BACNetAppData[] | BACNetAppData, options?: {
         forwardedFrom?: string;
         maxApduLength?: number;
+        segmentedResponseAccepted?: boolean;
     }): void;
     readPropertyMultipleResponse(receiver: BACNetAddress, invokeId: number, values: BACNetReadAccess[], options?: {
         maxApduLength?: number;
+        segmentedResponseAccepted?: boolean;
     }): void;
     iAmResponse(receiver: BACNetAddress, deviceId: number, segmentation: number, vendorId: number, maxApdu?: number): void;
     iHaveResponse(receiver: BACNetAddress, deviceId: BACNetObjectID, objectId: BACNetObjectID, objectName: string): void;
