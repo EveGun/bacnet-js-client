@@ -1148,4 +1148,78 @@ test.describe('bacnet - incoming segmentation hardening', () => {
 		}
 		assert.strictEqual(client._segmentAssemblyStates.size, 0)
 	})
+
+	test('receiver reassembles an incoming confirmed request of MORE than 64 segments (sequence wrap included)', async () => {
+		const { client, sent } = createStubClient()
+		const received: any[] = []
+		;(client as any).on('writeProperty', (msg: any) => received.push(msg))
+
+		// One valid WriteProperty payload split into 300 SMALL segments —
+		// proving both the >64-segment capability and the 8-bit
+		// sequence-number wrap on the RECEIVE side. No artificial cap may
+		// interfere. (Segment size is the sender's choice; tiny segments are
+		// legal and let the reassembled APDU stay service-decodable.)
+		const TEXT = 'y'.repeat(1300)
+		const full = { buffer: Buffer.alloc(4000), offset: 0 }
+		WriteProperty.encode(
+			full,
+			2,
+			1,
+			28,
+			ASN1_ARRAY_ALL,
+			ASN1_NO_PRIORITY,
+			[{ type: ApplicationTag.CHARACTER_STRING, value: TEXT }] as any,
+		)
+		const payload = full.buffer.subarray(0, full.offset)
+		const SEGMENTS = 300
+		const chunk = Math.ceil(payload.length / SEGMENTS)
+		assert.ok(chunk >= 1 && SEGMENTS * chunk >= payload.length)
+		const windowSize = 16
+		for (let i = 0; i < SEGMENTS; i++) {
+			const part = payload.subarray(i * chunk, Math.min((i + 1) * chunk, payload.length))
+			const more = i < SEGMENTS - 1
+			const type =
+				PduType.CONFIRMED_REQUEST |
+				PduConReqBit.SEGMENTED_MESSAGE |
+				(more ? PduConReqBit.MORE_FOLLOWS : 0)
+			const apdu = { buffer: Buffer.alloc(chunk + 32), offset: 0 }
+			baApdu.encodeConfirmedServiceRequest(
+				apdu,
+				type,
+				SERVICE,
+				MaxSegmentsAccepted.SEGMENTS_65,
+				MaxApduLengthAccepted.OCTETS_1476,
+				9,
+				i & 0xff,
+				windowSize,
+			)
+			part.copy(apdu.buffer, apdu.offset)
+			apdu.offset += part.length
+			;(client as any)._handlePdu(apdu.buffer, 0, apdu.offset, {
+				apduType: type,
+				sender: { address: DEVICE },
+				expectingReply: true,
+				confirmedService: true,
+			})
+		}
+
+		assert.strictEqual(received.length, 1, 'exactly one reassembled request surfaced')
+		const value = received[0].payload.value.value[0]
+		assert.strictEqual(value.type, ApplicationTag.CHARACTER_STRING)
+		assert.strictEqual(value.value.length, 1300, 'the full 300-segment payload survived reassembly')
+		// SegmentACKs: the first segment immediately, one per full window, one
+		// for the final segment — and every one a positive server-side ACK.
+		const acks = sent
+			.map((p) => baBvlc.decode(p.data, 0))
+			.filter(Boolean)
+			.map((bvlc, i) => {
+				const data = sent[i].data
+				const npdu = baNpdu.decode(data, bvlc!.len)
+				return data[bvlc!.len + npdu!.len]
+			})
+			.filter((typeOctet) => (typeOctet & PDU_TYPE_MASK) === PduType.SEGMENT_ACK)
+		assert.ok(acks.length >= Math.floor(SEGMENTS / windowSize), 'window-cadence SegmentACKs were sent')
+		assert.ok(acks.every((t) => (t & PduSegAckBit.NEGATIVE_ACK) === 0), 'all ACKs positive — in-order stream')
+	})
+
 })
