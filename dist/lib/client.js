@@ -1426,7 +1426,7 @@ class BACnetClient extends EventTypes_1.TypedEventEmitter {
     async readProperty(receiver, objectId, propertyId, options = {}) {
         const settings = {
             maxSegments: options.maxSegments ??
-                enum_1.MaxSegmentsAccepted.SEGMENTS_65,
+                enum_1.MaxSegmentsAccepted.SEGMENTS_64,
             maxApdu: options.maxApdu ||
                 enum_1.MaxApduLengthAccepted.OCTETS_1476,
             invokeId: options.invokeId ||
@@ -1454,7 +1454,7 @@ class BACnetClient extends EventTypes_1.TypedEventEmitter {
     async writeProperty(receiver, objectId, propertyId, values, options) {
         const settings = {
             maxSegments: options.maxSegments ??
-                enum_1.MaxSegmentsAccepted.SEGMENTS_65,
+                enum_1.MaxSegmentsAccepted.SEGMENTS_64,
             maxApdu: options.maxApdu ||
                 enum_1.MaxApduLengthAccepted.OCTETS_1476,
             invokeId: options.invokeId ||
@@ -1475,7 +1475,7 @@ class BACnetClient extends EventTypes_1.TypedEventEmitter {
     async readPropertyMultiple(receiver, propertiesArray, options = {}) {
         const settings = {
             maxSegments: options.maxSegments ??
-                enum_1.MaxSegmentsAccepted.SEGMENTS_65,
+                enum_1.MaxSegmentsAccepted.SEGMENTS_64,
             maxApdu: options.maxApdu ||
                 enum_1.MaxApduLengthAccepted.OCTETS_1476,
             invokeId: options.invokeId ||
@@ -1500,7 +1500,7 @@ class BACnetClient extends EventTypes_1.TypedEventEmitter {
     async writePropertyMultiple(receiver, values, options = {}) {
         const settings = {
             maxSegments: options.maxSegments ??
-                enum_1.MaxSegmentsAccepted.SEGMENTS_65,
+                enum_1.MaxSegmentsAccepted.SEGMENTS_64,
             maxApdu: options.maxApdu ||
                 enum_1.MaxApduLengthAccepted.OCTETS_1476,
             invokeId: options.invokeId ||
@@ -1519,7 +1519,7 @@ class BACnetClient extends EventTypes_1.TypedEventEmitter {
     async confirmedCOVNotification(receiver, monitoredObject, subscribeId, initiatingDeviceId, lifetime, values, options = {}) {
         const settings = {
             maxSegments: options.maxSegments ??
-                enum_1.MaxSegmentsAccepted.SEGMENTS_65,
+                enum_1.MaxSegmentsAccepted.SEGMENTS_64,
             maxApdu: options.maxApdu ||
                 enum_1.MaxApduLengthAccepted.OCTETS_1476,
             invokeId: options.invokeId ||
@@ -1538,7 +1538,7 @@ class BACnetClient extends EventTypes_1.TypedEventEmitter {
     async deviceCommunicationControl(receiver, timeDuration, enableDisable, options = {}) {
         const settings = {
             maxSegments: options.maxSegments ??
-                enum_1.MaxSegmentsAccepted.SEGMENTS_65,
+                enum_1.MaxSegmentsAccepted.SEGMENTS_64,
             maxApdu: options.maxApdu ||
                 enum_1.MaxApduLengthAccepted.OCTETS_1476,
             invokeId: options.invokeId ||
@@ -1558,7 +1558,7 @@ class BACnetClient extends EventTypes_1.TypedEventEmitter {
     async reinitializeDevice(receiver, state, options = {}) {
         const settings = {
             maxSegments: options.maxSegments ??
-                enum_1.MaxSegmentsAccepted.SEGMENTS_65,
+                enum_1.MaxSegmentsAccepted.SEGMENTS_64,
             maxApdu: options.maxApdu ||
                 enum_1.MaxApduLengthAccepted.OCTETS_1476,
             invokeId: options.invokeId ||
@@ -1577,7 +1577,7 @@ class BACnetClient extends EventTypes_1.TypedEventEmitter {
     }
     async writeFile(receiver, objectId, position, fileBuffer, options = {}) {
         const settings = {
-            maxSegments: options.maxSegments ?? enum_1.MaxSegmentsAccepted.SEGMENTS_65,
+            maxSegments: options.maxSegments ?? enum_1.MaxSegmentsAccepted.SEGMENTS_64,
             maxApdu: options.maxApdu || enum_1.MaxApduLengthAccepted.OCTETS_1476,
             invokeId: options.invokeId || this._getInvokeId(receiver),
         };
@@ -1601,7 +1601,7 @@ class BACnetClient extends EventTypes_1.TypedEventEmitter {
     async readFile(receiver, objectId, position, count, options = {}) {
         const settings = {
             maxSegments: options.maxSegments ??
-                enum_1.MaxSegmentsAccepted.SEGMENTS_65,
+                enum_1.MaxSegmentsAccepted.SEGMENTS_64,
             maxApdu: options.maxApdu ||
                 enum_1.MaxApduLengthAccepted.OCTETS_1476,
             invokeId: options.invokeId ||
@@ -1625,7 +1625,7 @@ class BACnetClient extends EventTypes_1.TypedEventEmitter {
     async readRange(receiver, objectId, idxBegin, quantity, options = {}) {
         const settings = {
             maxSegments: options.maxSegments ??
-                enum_1.MaxSegmentsAccepted.SEGMENTS_65,
+                enum_1.MaxSegmentsAccepted.SEGMENTS_64,
             maxApdu: options.maxApdu ||
                 enum_1.MaxApduLengthAccepted.OCTETS_1476,
             invokeId: options.invokeId ||
@@ -1653,7 +1653,7 @@ class BACnetClient extends EventTypes_1.TypedEventEmitter {
     }
     async subscribeCov(receiver, objectId, subscribeId, cancel, issueConfirmedNotifications, lifetime, options = {}) {
         const settings = {
-            maxSegments: options.maxSegments ?? enum_1.MaxSegmentsAccepted.SEGMENTS_65,
+            maxSegments: options.maxSegments ?? enum_1.MaxSegmentsAccepted.SEGMENTS_64,
             maxApdu: options.maxApdu || enum_1.MaxApduLengthAccepted.OCTETS_1476,
             invokeId: options.invokeId || this._getInvokeId(receiver),
         };
@@ -1669,7 +1669,7 @@ class BACnetClient extends EventTypes_1.TypedEventEmitter {
     }
     async subscribeProperty(receiver, objectId, monitoredProperty, subscribeId, cancel, issueConfirmedNotifications, options = {}) {
         const settings = {
-            maxSegments: options.maxSegments ?? enum_1.MaxSegmentsAccepted.SEGMENTS_65,
+            maxSegments: options.maxSegments ?? enum_1.MaxSegmentsAccepted.SEGMENTS_64,
             maxApdu: options.maxApdu || enum_1.MaxApduLengthAccepted.OCTETS_1476,
             invokeId: options.invokeId || this._getInvokeId(receiver),
         };
@@ -1693,7 +1693,7 @@ class BACnetClient extends EventTypes_1.TypedEventEmitter {
     }
     async createObject(receiver, objectId, values, options = {}) {
         const settings = {
-            maxSegments: options.maxSegments ?? enum_1.MaxSegmentsAccepted.SEGMENTS_65,
+            maxSegments: options.maxSegments ?? enum_1.MaxSegmentsAccepted.SEGMENTS_64,
             maxApdu: options.maxApdu || enum_1.MaxApduLengthAccepted.OCTETS_1476,
             invokeId: options.invokeId || this._getInvokeId(receiver),
         };
@@ -1709,7 +1709,7 @@ class BACnetClient extends EventTypes_1.TypedEventEmitter {
     }
     async deleteObject(receiver, objectId, options = {}) {
         const settings = {
-            maxSegments: options.maxSegments ?? enum_1.MaxSegmentsAccepted.SEGMENTS_65,
+            maxSegments: options.maxSegments ?? enum_1.MaxSegmentsAccepted.SEGMENTS_64,
             maxApdu: options.maxApdu || enum_1.MaxApduLengthAccepted.OCTETS_1476,
             invokeId: options.invokeId || this._getInvokeId(receiver),
         };
@@ -1725,7 +1725,7 @@ class BACnetClient extends EventTypes_1.TypedEventEmitter {
     }
     async removeListElement(receiver, objectId, reference, values, options = {}) {
         const settings = {
-            maxSegments: options.maxSegments ?? enum_1.MaxSegmentsAccepted.SEGMENTS_65,
+            maxSegments: options.maxSegments ?? enum_1.MaxSegmentsAccepted.SEGMENTS_64,
             maxApdu: options.maxApdu || enum_1.MaxApduLengthAccepted.OCTETS_1476,
             invokeId: options.invokeId || this._getInvokeId(receiver),
         };
@@ -1741,7 +1741,7 @@ class BACnetClient extends EventTypes_1.TypedEventEmitter {
     }
     async addListElement(receiver, objectId, reference, values, options = {}) {
         const settings = {
-            maxSegments: options.maxSegments ?? enum_1.MaxSegmentsAccepted.SEGMENTS_65,
+            maxSegments: options.maxSegments ?? enum_1.MaxSegmentsAccepted.SEGMENTS_64,
             maxApdu: options.maxApdu || enum_1.MaxApduLengthAccepted.OCTETS_1476,
             invokeId: options.invokeId || this._getInvokeId(receiver),
         };
@@ -1758,7 +1758,7 @@ class BACnetClient extends EventTypes_1.TypedEventEmitter {
     async getAlarmSummary(receiver, options = {}) {
         const settings = {
             maxSegments: options.maxSegments ??
-                enum_1.MaxSegmentsAccepted.SEGMENTS_65,
+                enum_1.MaxSegmentsAccepted.SEGMENTS_64,
             maxApdu: options.maxApdu ||
                 enum_1.MaxApduLengthAccepted.OCTETS_1476,
             invokeId: options.invokeId ||
@@ -1783,7 +1783,7 @@ class BACnetClient extends EventTypes_1.TypedEventEmitter {
     async getEventInformation(receiver, objectId, options = {}) {
         const settings = {
             maxSegments: options.maxSegments ??
-                enum_1.MaxSegmentsAccepted.SEGMENTS_65,
+                enum_1.MaxSegmentsAccepted.SEGMENTS_64,
             maxApdu: options.maxApdu ||
                 enum_1.MaxApduLengthAccepted.OCTETS_1476,
         };
@@ -1831,7 +1831,7 @@ class BACnetClient extends EventTypes_1.TypedEventEmitter {
         }
         const settings = {
             maxSegments: options.maxSegments ??
-                enum_1.MaxSegmentsAccepted.SEGMENTS_65,
+                enum_1.MaxSegmentsAccepted.SEGMENTS_64,
             maxApdu: options.maxApdu ||
                 enum_1.MaxApduLengthAccepted.OCTETS_1476,
             invokeId: options.invokeId ||
@@ -1850,7 +1850,7 @@ class BACnetClient extends EventTypes_1.TypedEventEmitter {
     async confirmedPrivateTransfer(receiver, vendorId, serviceNumber, data, options = {}) {
         const settings = {
             maxSegments: options.maxSegments ??
-                enum_1.MaxSegmentsAccepted.SEGMENTS_65,
+                enum_1.MaxSegmentsAccepted.SEGMENTS_64,
             maxApdu: options.maxApdu ||
                 enum_1.MaxApduLengthAccepted.OCTETS_1476,
             invokeId: options.invokeId ||
@@ -1875,7 +1875,7 @@ class BACnetClient extends EventTypes_1.TypedEventEmitter {
     }
     async getEnrollmentSummary(receiver, acknowledgmentFilter, options = {}) {
         const settings = {
-            maxSegments: options.maxSegments ?? enum_1.MaxSegmentsAccepted.SEGMENTS_65,
+            maxSegments: options.maxSegments ?? enum_1.MaxSegmentsAccepted.SEGMENTS_64,
             maxApdu: options.maxApdu || enum_1.MaxApduLengthAccepted.OCTETS_1476,
             invokeId: options.invokeId || this._getInvokeId(receiver),
         };
@@ -1905,7 +1905,7 @@ class BACnetClient extends EventTypes_1.TypedEventEmitter {
     async confirmedEventNotification(receiver, eventNotification, options = {}) {
         const settings = {
             maxSegments: options.maxSegments ??
-                enum_1.MaxSegmentsAccepted.SEGMENTS_65,
+                enum_1.MaxSegmentsAccepted.SEGMENTS_64,
             maxApdu: options.maxApdu ||
                 enum_1.MaxApduLengthAccepted.OCTETS_1476,
             invokeId: options.invokeId ||
