@@ -587,6 +587,20 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 	 * declared max-APDU-length-accepted or what fits in one transport
 	 * datagram (this library does not transmit segmented responses).
 	 */
+	/**
+	 * Abort reason when a response cannot fit one APDU. The requester said
+	 * segmented-response-accepted=false (or we cannot tell): the transaction
+	 * would need segmentation the peer does not accept -> Abort
+	 * SEGMENTATION_NOT_SUPPORTED (135.1 13.1.12.1). The requester accepts
+	 * segmented responses but this stack does not transmit them / capacity is
+	 * insufficient -> Abort BUFFER_OVERFLOW.
+	 */
+	private _responseOverflowReason(segmentedResponseAccepted?: boolean): number {
+		return segmentedResponseAccepted
+			? AbortReason.BUFFER_OVERFLOW
+			: AbortReason.SEGMENTATION_NOT_SUPPORTED
+	}
+
 	private _responseExceedsLimits(
 		buffer: EncodeBuffer,
 		apduStart: number,
@@ -3664,7 +3678,13 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		objectId: BACNetObjectID,
 		property: BACNetPropertyID,
 		value: BACNetAppData[] | BACNetAppData,
-		options: { forwardedFrom?: string; maxApduLength?: number } = {},
+		options: {
+			forwardedFrom?: string
+			maxApduLength?: number
+			/** Requester's segmented-response-accepted flag: picks the
+			 * overflow Abort reason (135.1 13.1.12.1). */
+			segmentedResponseAccepted?: boolean
+		} = {},
 	): void {
 		const buffer = this._getResponseBuffer(receiver)
 		baNpdu.encode(buffer, NpduControlPriority.NORMAL_MESSAGE, receiver)
@@ -3695,7 +3715,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			return this.abortResponse(
 				receiver,
 				invokeId,
-				AbortReason.BUFFER_OVERFLOW,
+				this._responseOverflowReason(options.segmentedResponseAccepted),
 			)
 		}
 		this.sendBvlc(receiver, buffer)
@@ -3708,7 +3728,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 		receiver: BACNetAddress,
 		invokeId: number,
 		values: BACNetReadAccess[],
-		options: { maxApduLength?: number } = {},
+		options: { maxApduLength?: number; segmentedResponseAccepted?: boolean } = {},
 	): void {
 		const buffer = this._getResponseBuffer(receiver)
 		baNpdu.encode(buffer, NpduControlPriority.NORMAL_MESSAGE, receiver)
@@ -3730,7 +3750,7 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			return this.abortResponse(
 				receiver,
 				invokeId,
-				AbortReason.BUFFER_OVERFLOW,
+				this._responseOverflowReason(options.segmentedResponseAccepted),
 			)
 		}
 		this.sendBvlc(receiver, buffer)

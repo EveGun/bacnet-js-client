@@ -580,7 +580,7 @@ test('bacnet - BVLC BBMD-function NAKs (Annex J)', async (t) => {
 
 test('bacnet - responder overflow protection (135.1 9.18.1.6)', async (t) => {
 	await t.test(
-		'oversized ReadProperty response becomes Abort BUFFER_OVERFLOW',
+		'oversized response with SRA=false (or unknown) aborts SEGMENTATION_NOT_SUPPORTED (13.1.12.1)',
 		() => {
 			const { client, sent } = createStubClient()
 			const bigValue = Array.from({ length: 40 }, () => ({
@@ -599,12 +599,16 @@ test('bacnet - responder overflow protection (135.1 9.18.1.6)', async (t) => {
 			assert.strictEqual(pduType, PduType.ABORT)
 			const abort = baApdu.decodeAbort(data, apduOffset)
 			assert.strictEqual(abort.invokeId, 91)
-			assert.strictEqual(abort.reason, AbortReason.BUFFER_OVERFLOW)
+			assert.strictEqual(
+				abort.reason,
+				AbortReason.SEGMENTATION_NOT_SUPPORTED,
+				'the requester did not accept a segmented response — the transaction would need one',
+			)
 		},
 	)
 
 	await t.test(
-		'response exceeding the requester max-APDU is aborted even if it fits the wire',
+		'response exceeding the requester max-APDU with SRA=true aborts BUFFER_OVERFLOW',
 		() => {
 			const { client, sent } = createStubClient()
 			const value = [
@@ -619,14 +623,54 @@ test('bacnet - responder overflow protection (135.1 9.18.1.6)', async (t) => {
 				{ type: 8, instance: 1 },
 				{ id: 77, index: 0xffffffff },
 				value,
-				{ maxApduLength: 480 },
+				{ maxApduLength: 480, segmentedResponseAccepted: true },
 			)
 			const { pduType, data, apduOffset } = decodeSentPdu(sent[0].data)
 			assert.strictEqual(pduType, PduType.ABORT)
 			assert.strictEqual(
 				baApdu.decodeAbort(data, apduOffset).reason,
 				AbortReason.BUFFER_OVERFLOW,
+				'segmentation was accepted but capacity is insufficient',
 			)
+		},
+	)
+
+	await t.test(
+		'RPM response overflow follows the same SRA-dependent abort reasons',
+		() => {
+			const big = Array.from({ length: 40 }, (_, i) => ({
+				objectId: { type: 8, instance: 1 },
+				values: [
+					{
+						property: { id: 77, index: 0xffffffff },
+						value: [
+							{
+								type: ApplicationTag.CHARACTER_STRING,
+								value: 'z'.repeat(200),
+							},
+						],
+					},
+				],
+			}))
+			for (const [sra, expected] of [
+				[false, AbortReason.SEGMENTATION_NOT_SUPPORTED],
+				[true, AbortReason.BUFFER_OVERFLOW],
+			] as Array<[boolean, number]>) {
+				const { client, sent } = createStubClient()
+				client.readPropertyMultipleResponse(
+					{ address: DEVICE_A },
+					93,
+					big as any,
+					{ segmentedResponseAccepted: sra },
+				)
+				const { pduType, data, apduOffset } = decodeSentPdu(sent[0].data)
+				assert.strictEqual(pduType, PduType.ABORT)
+				assert.strictEqual(
+					baApdu.decodeAbort(data, apduOffset).reason,
+					expected,
+					`SRA=${sra}`,
+				)
+			}
 		},
 	)
 
