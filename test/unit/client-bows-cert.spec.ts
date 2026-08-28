@@ -821,3 +821,78 @@ test('bacnet - WriteProperty decoder enforces context-class tags (135.1 13.4.3)'
 		},
 	)
 })
+
+test('bacnet - unsupported confirmed services reject UNRECOGNIZED_SERVICE at the dispatch layer (9.39.1 audit)', async (t) => {
+	const expectReject = (sent: SentPacket[], invokeId: number, label: string) => {
+		assert.strictEqual(sent.length, 1, `${label}: exactly one reply`)
+		const { pduType, data, apduOffset } = decodeSentPdu(sent[0].data)
+		assert.strictEqual(pduType, PduType.REJECT, label)
+		const reject = baApdu.decodeAbort(data, apduOffset)
+		assert.strictEqual(reject.invokeId, invokeId, label)
+		assert.strictEqual(
+			reject.reason,
+			RejectReason.UNRECOGNIZED_SERVICE,
+			`${label}: must be UNRECOGNIZED_SERVICE, never a parser-level reject`,
+		)
+	}
+	// Payload variants that previously leaked parser-level rejects.
+	const MALFORMED = (apdu: EncodeBuffer) => {
+		apdu.buffer[apdu.offset++] = 0x0c // lone opening of a context object id
+	}
+
+	await t.test('audit findings: ConfirmedCOVNotification and CreateObject', () => {
+		for (const [service, label] of [
+			[ConfirmedServiceChoice.CONFIRMED_COV_NOTIFICATION, 'ConfirmedCOVNotification'],
+			[ConfirmedServiceChoice.CREATE_OBJECT, 'CreateObject'],
+		] as Array<[number, string]>) {
+			// Malformed payload: previously INVALID_TAG.
+			{
+				const { client, sent } = createStubClient()
+				injectConfirmedRequest(client, service, 61, MALFORMED)
+				expectReject(sent, 61, `${label} malformed`)
+			}
+			// Well-formed-looking payload with trailing octets: previously
+			// TOO_MANY_ARGUMENTS.
+			{
+				const { client, sent } = createStubClient()
+				injectConfirmedRequest(client, service, 62, undefined, 4)
+				expectReject(sent, 62, `${label} trailing`)
+			}
+		}
+	})
+
+	await t.test('full sweep: every confirmed service choice without a handler', () => {
+		const services = Object.values(ConfirmedServiceChoice).filter(
+			(v): v is number => Number.isInteger(v as number),
+		)
+		assert.ok(services.length >= 25, 'sweep covers the service catalogue')
+		for (const service of services) {
+			const { client, sent } = createStubClient()
+			injectConfirmedRequest(client, service, 63, MALFORMED)
+			expectReject(sent, 63, `service ${service}`)
+		}
+	})
+
+	await t.test('supported services keep their 13.4.x parser behaviour', () => {
+		// Malformed payload of a SUPPORTED service still rejects INVALID_TAG.
+		{
+			const { client, sent } = createStubClient()
+			client.on('readProperty', () => {})
+			injectConfirmedRequest(client, ConfirmedServiceChoice.READ_PROPERTY, 64, MALFORMED)
+			const { pduType, data, apduOffset } = decodeSentPdu(sent[0].data)
+			assert.strictEqual(pduType, PduType.REJECT)
+			assert.strictEqual(baApdu.decodeAbort(data, apduOffset).reason, RejectReason.INVALID_TAG)
+		}
+		// Valid payload of a supported service still reaches the listener.
+		{
+			const { client, sent } = createStubClient()
+			const seen: any[] = []
+			client.on('readProperty', (msg: any) => seen.push(msg))
+			injectConfirmedRequest(client, ConfirmedServiceChoice.READ_PROPERTY, 65, (apdu) =>
+				ReadProperty.encode(apdu, 8, 1, 77, 0xffffffff),
+			)
+			assert.strictEqual(seen.length, 1, 'supported service dispatched to the listener')
+			assert.strictEqual(sent.length, 0, 'no reject for a valid supported request')
+		}
+	})
+})

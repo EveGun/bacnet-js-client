@@ -1821,6 +1821,26 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			: ''
 		trace(`Received service request${id}:`, name)
 
+		// ASHRAE 135 - 18.9 / 135.1 - 9.39.1: a request for a service this
+		// device does not EXECUTE (no handler registered) is dealt with at
+		// the DISPATCH layer, before any service-specific payload parsing —
+		// a malformed payload of an unsupported service must never surface
+		// as INVALID_TAG / TOO_MANY_ARGUMENTS. Confirmed requests get a
+		// Reject-PDU with UNRECOGNIZED_SERVICE; unconfirmed requests are
+		// silently discarded (135.1 - 9.39.2 — the reject helper no-ops for
+		// them).
+		if (
+			!this.listenerCount(name) &&
+			!this.listenerCount('unhandledEvent')
+		) {
+			debug('Received request for unsupported service:', name)
+			this._rejectConfirmedServiceRequest(
+				content,
+				RejectReason.UNRECOGNIZED_SERVICE,
+			)
+			return
+		}
+
 		// Find a function to decode the packet.
 		const serviceHandler = ServicesMap[
 			name as keyof typeof ServicesMap
