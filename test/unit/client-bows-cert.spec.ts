@@ -896,3 +896,54 @@ test('bacnet - unsupported confirmed services reject UNRECOGNIZED_SERVICE at the
 		}
 	})
 })
+
+test('bacnet - responses to remote-origin requests carry Hop Count 255 (BTL 10.1.1)', async (t) => {
+	const ROUTED = {
+		address: DEVICE_A,
+		net: 1234,
+		adr: [0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f],
+	}
+
+	await t.test('npdu.encode: omitted hop count defaults to 255 with a destination specifier', () => {
+		const withDefault: EncodeBuffer = { buffer: Buffer.alloc(64), offset: 0 }
+		baNpdu.encode(withDefault, 0, ROUTED as any)
+		const decoded = baNpdu.decode(withDefault.buffer, 0)
+		assert.ok(decoded)
+		assert.strictEqual(decoded.destination?.net, 1234)
+		assert.deepStrictEqual(decoded.destination?.adr, ROUTED.adr)
+		assert.strictEqual(decoded.hopCount, 255, 'originating NPDU initializes Hop Count to 255')
+
+		// Explicit values (router semantics) are honoured untouched.
+		const explicit: EncodeBuffer = { buffer: Buffer.alloc(64), offset: 0 }
+		baNpdu.encode(explicit, 0, ROUTED as any, undefined, 42)
+		assert.strictEqual(baNpdu.decode(explicit.buffer, 0)!.hopCount, 42)
+
+		// No destination specifier -> no hop-count octet at all.
+		const local: EncodeBuffer = { buffer: Buffer.alloc(64), offset: 0 }
+		baNpdu.encode(local, 0, { address: DEVICE_A } as any)
+		assert.strictEqual(baNpdu.decode(local.buffer, 0)!.hopCount, 0)
+	})
+
+	await t.test('ComplexACK back to a remote SNET/SADR: DNET/DADR preserved, Hop Count 255', () => {
+		const { client, sent } = createStubClient()
+		client.readPropertyResponse(
+			ROUTED,
+			71,
+			{ type: 8, instance: 1 },
+			{ id: 77, index: 0xffffffff },
+			[{ type: ApplicationTag.CHARACTER_STRING, value: 'Evolo Gateway' }],
+		)
+		assert.strictEqual(sent.length, 1)
+		const data = sent[0].data
+		const bvlc = baBvlc.decode(data, 0)!
+		const npdu = baNpdu.decode(data, bvlc.len)!
+		assert.strictEqual(npdu.destination?.net, 1234, 'DNET = request SNET')
+		assert.deepStrictEqual(npdu.destination?.adr, ROUTED.adr, 'DADR = request SADR')
+		assert.strictEqual(npdu.hopCount, 255, 'Hop Count initialized to 255, not 0')
+		assert.strictEqual(
+			data[bvlc.len + npdu.len] & PDU_TYPE_MASK,
+			PduType.COMPLEX_ACK,
+			'the APDU is still the ComplexACK',
+		)
+	})
+})

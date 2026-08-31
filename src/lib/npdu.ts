@@ -124,7 +124,13 @@ export const encode = (
 	}
 
 	if (hasDestination) {
-		buffer.buffer[buffer.offset++] = hopCount || 0
+		// ASHRAE 135 6.2.2: an ORIGINATING device initializes Hop Count to
+		// 255 when a destination specifier (DNET/DADR) is present. This
+		// encoder only builds originating NPDUs (this stack does not forward
+		// routed packets), so an omitted hop count defaults to 255 — a
+		// caller that supplies an explicit value (router semantics) is
+		// honoured as-is.
+		buffer.buffer[buffer.offset++] = hopCount ?? 0xff
 	}
 
 	if ((funct & NpduControlBit.NETWORK_LAYER_MESSAGE) > 0) {
