@@ -2182,6 +2182,24 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			return trace('Received network layer message -> Drop package')
 		}
 
+		// ASHRAE 135 6.5 / BTL 10.6.1: this stack is NOT a router. An NPDU
+		// still carrying a destination specifier for a specific remote
+		// network (DNET !== 0xFFFF) is in transit to another network — a
+		// router delivering locally would have stripped it. Such traffic is
+		// dropped BEFORE application-layer dispatch, confirmed and
+		// unconfirmed alike (no response of any kind). The global-broadcast
+		// destination (DNET 0xFFFF) and remote SOURCE specifiers (SNET/SADR,
+		// used to route the response back) are processed normally.
+		if (
+			result.destination &&
+			result.destination.net > 0 &&
+			result.destination.net !== 0xffff
+		) {
+			return trace(
+				'Received NPDU addressed to remote network -> Drop package',
+			)
+		}
+
 		offset += result.len
 		msgLength -= result.len
 

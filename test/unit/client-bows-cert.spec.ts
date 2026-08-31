@@ -947,3 +947,78 @@ test('bacnet - responses to remote-origin requests carry Hop Count 255 (BTL 10.1
 		)
 	})
 })
+
+test('bacnet - NPDUs addressed to a foreign DNET are dropped before dispatch (BTL 10.6.1)', async (t) => {
+	const FOREIGN = { net: 1234, adr: [0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f] }
+	const injectNpdu = (
+		client: any,
+		opts: { destination?: any; source?: any },
+		buildApdu: (apdu: EncodeBuffer) => void,
+	) => {
+		const frame: EncodeBuffer = { buffer: Buffer.alloc(256), offset: 0 }
+		baNpdu.encode(frame, 0, opts.destination, opts.source, undefined)
+		buildApdu(frame)
+		client._handleNpdu(frame.buffer, 0, frame.offset, {
+			sender: { address: DEVICE_A },
+			apduType: 0,
+			expectingReply: false,
+			confirmedService: false,
+		})
+	}
+	const whoIsApdu = (apdu: EncodeBuffer) => {
+		baApdu.encodeUnconfirmedServiceRequest(
+			apdu,
+			PduType.UNCONFIRMED_REQUEST,
+			8, // Who-Is
+		)
+	}
+	const readPropertyApdu = (apdu: EncodeBuffer) => {
+		baApdu.encodeConfirmedServiceRequest(
+			apdu,
+			PduType.CONFIRMED_REQUEST,
+			ConfirmedServiceChoice.READ_PROPERTY,
+			MaxSegmentsAccepted.SEGMENTS_0,
+			MaxApduLengthAccepted.OCTETS_1476,
+			51,
+			0,
+			0,
+		)
+		ReadProperty.encode(apdu, 8, 1, 77, 0xffffffff)
+	}
+
+	await t.test('unconfirmed (Who-Is) with DNET=1234 is ignored — no I-Am, no dispatch', () => {
+		const { client, sent } = createStubClient()
+		const seen: any[] = []
+		client.on('whoIs', (msg: any) => seen.push(msg))
+		injectNpdu(client, { destination: { net: 1234 } }, whoIsApdu)
+		assert.strictEqual(seen.length, 0, 'not dispatched to the application layer')
+		assert.strictEqual(sent.length, 0, 'nothing sent in reply')
+	})
+
+	await t.test('confirmed (ReadProperty) with DNET=1234 + DADR is ignored — no ACK, no Reject', () => {
+		const { client, sent } = createStubClient()
+		const seen: any[] = []
+		client.on('readProperty', (msg: any) => seen.push(msg))
+		injectNpdu(client, { destination: FOREIGN }, readPropertyApdu)
+		assert.strictEqual(seen.length, 0, 'not dispatched to the application layer')
+		assert.strictEqual(sent.length, 0, 'no response of any kind')
+	})
+
+	await t.test('global broadcast (DNET=0xFFFF) still dispatches', () => {
+		const { client, sent } = createStubClient()
+		const seen: any[] = []
+		client.on('whoIs', (msg: any) => seen.push(msg))
+		injectNpdu(client, { destination: { net: 0xffff } }, whoIsApdu)
+		assert.strictEqual(seen.length, 1, 'global broadcast reaches the application layer')
+	})
+
+	await t.test('remote SOURCE only (BTL 10.1.1) still dispatches and keeps the routing info', () => {
+		const { client, sent } = createStubClient()
+		const seen: any[] = []
+		client.on('readProperty', (msg: any) => seen.push(msg))
+		injectNpdu(client, { source: FOREIGN }, readPropertyApdu)
+		assert.strictEqual(seen.length, 1, 'request to the LOCAL device is processed')
+		assert.strictEqual(seen[0].header.sender.net, 1234, 'response routing SNET preserved')
+		assert.deepStrictEqual(seen[0].header.sender.adr, FOREIGN.adr, 'response routing SADR preserved')
+	})
+})
