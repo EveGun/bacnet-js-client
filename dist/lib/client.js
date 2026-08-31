@@ -1167,6 +1167,11 @@ class BACnetClient extends EventTypes_1.TypedEventEmitter {
         }
         header.apduType = baApdu.getDecodedType(buffer, offset);
         header.expectingReply = !!(result.funct & enum_1.NpduControlBit.EXPECTING_REPLY);
+        if ((header.apduType & enum_1.PDU_TYPE_MASK) === enum_1.PduType.CONFIRMED_REQUEST &&
+            (header.func === enum_1.BvlcResultPurpose.ORIGINAL_BROADCAST_NPDU ||
+                result.destination?.net === 0xffff)) {
+            return trace('Received confirmed request as broadcast -> Drop package');
+        }
         if (result.source) {
             header.sender.net = result.source.net;
             header.sender.adr = result.source.adr;
