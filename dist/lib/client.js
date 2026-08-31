@@ -1155,6 +1155,11 @@ class BACnetClient extends EventTypes_1.TypedEventEmitter {
         if (result.funct & enum_1.NpduControlBit.NETWORK_LAYER_MESSAGE) {
             return trace('Received network layer message -> Drop package');
         }
+        if (result.destination &&
+            result.destination.net > 0 &&
+            result.destination.net !== 0xffff) {
+            return trace('Received NPDU addressed to remote network -> Drop package');
+        }
         offset += result.len;
         msgLength -= result.len;
         if (msgLength <= 0) {
