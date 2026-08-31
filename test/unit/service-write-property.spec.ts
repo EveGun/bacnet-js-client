@@ -1409,13 +1409,9 @@ test.describe('WriteProperty schedule/calendar compatibility', () => {
 		// TD read bytes for ENUM [1, NULL, 2, 3, NO_VALUE, 4, 5]: ordinary
 		// datums in the constructed-value [1] wrapper, no-value as bare 0x08.
 		const TD_READ = Buffer.from([
-			0x1e, 0x91, 0x01, 0x1f,
-			0x1e, 0x00, 0x1f,
-			0x1e, 0x91, 0x02, 0x1f,
-			0x1e, 0x91, 0x03, 0x1f,
-			0x08,
-			0x1e, 0x91, 0x04, 0x1f,
-			0x1e, 0x91, 0x05, 0x1f,
+			0x1e, 0x91, 0x01, 0x1f, 0x1e, 0x00, 0x1f, 0x1e, 0x91, 0x02, 0x1f,
+			0x1e, 0x91, 0x03, 0x1f, 0x08, 0x1e, 0x91, 0x04, 0x1f, 0x1e, 0x91,
+			0x05, 0x1f,
 		])
 
 		test('byte-level roundtrip: decode TD read, edit last to 6, encode write symmetrically', () => {
@@ -1430,7 +1426,7 @@ test.describe('WriteProperty schedule/calendar compatibility', () => {
 					ObjectType.TIMER,
 					PropertyIdentifier.STATE_CHANGE_VALUES,
 				) as any
-				assert.ok(decoded, 'entry decodes at offset ' + offset)
+				assert.ok(decoded, `entry decodes at offset ${offset}`)
 				offset += decoded.len
 				entries.push({ type: decoded.type, value: decoded.value })
 			}
@@ -1462,12 +1458,8 @@ test.describe('WriteProperty schedule/calendar compatibility', () => {
 			assert.deepStrictEqual(
 				[...buffer.buffer.subarray(0, buffer.offset)],
 				[
-					0x1e, 0x91, 0x01, 0x1f,
-					0x1e, 0x00, 0x1f,
-					0x1e, 0x91, 0x02, 0x1f,
-					0x1e, 0x91, 0x03, 0x1f,
-					0x08,
-					0x1e, 0x91, 0x04, 0x1f,
+					0x1e, 0x91, 0x01, 0x1f, 0x1e, 0x00, 0x1f, 0x1e, 0x91, 0x02,
+					0x1f, 0x1e, 0x91, 0x03, 0x1f, 0x08, 0x1e, 0x91, 0x04, 0x1f,
 					0x1e, 0x91, 0x06, 0x1f,
 				],
 			)
@@ -1494,7 +1486,10 @@ test.describe('WriteProperty schedule/calendar compatibility', () => {
 				5,
 				[{ type: ApplicationTag.NO_VALUE, value: null }] as any,
 			)
-			assert.deepStrictEqual([...noValue.buffer.subarray(0, noValue.offset)], [0x08])
+			assert.deepStrictEqual(
+				[...noValue.buffer.subarray(0, noValue.offset)],
+				[0x08],
+			)
 			const resize = utils.getBuffer()
 			WriteProperty.encodePropertyValuePayload(
 				resize,
@@ -1503,7 +1498,10 @@ test.describe('WriteProperty schedule/calendar compatibility', () => {
 				0,
 				7 as any,
 			)
-			assert.deepStrictEqual([...resize.buffer.subarray(0, resize.offset)], [0x21, 0x07])
+			assert.deepStrictEqual(
+				[...resize.buffer.subarray(0, resize.offset)],
+				[0x21, 0x07],
+			)
 		})
 	})
 })

@@ -58,7 +58,9 @@ class ReadProperty extends AbstractServices_1.BacnetService {
         const nonEmptyDays = days.filter((d) => d.length > 0);
         if (nonEmptyDays.length <= 1)
             return days[0];
-        return idx >= 0 && idx < days.length ? days[idx] : undefined;
+        return idx >= 0 && idx < days.length
+            ? days[idx]
+            : undefined;
     }
     static encode(buffer, objectType, objectInstance, propertyId, arrayIndex) {
         if (objectType === enum_1.ObjectType.SCHEDULE &&

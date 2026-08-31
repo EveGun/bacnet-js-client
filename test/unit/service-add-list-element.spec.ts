@@ -47,8 +47,14 @@ test.describe('bacnet - Services layer AddListElement unit', () => {
 				{
 					type: ApplicationTag.DATERANGE,
 					value: [
-						{ type: ApplicationTag.DATE, value: new Date(2026, 6, 1) },
-						{ type: ApplicationTag.DATE, value: new Date(2026, 6, 31) },
+						{
+							type: ApplicationTag.DATE,
+							value: new Date(2026, 6, 1),
+						},
+						{
+							type: ApplicationTag.DATE,
+							value: new Date(2026, 6, 31),
+						},
 					],
 				},
 				{

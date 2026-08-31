@@ -2183,7 +2183,7 @@ const decodeDeviceObjPropertyRef = (
 	// let arrayIndex = ASN1_ARRAY_ALL;
 	if (!decodeIsContextTag(buffer, offset + len, 0)) return undefined
 	len++
-	let objectId = decodeObjectId(buffer, offset + len)
+	const objectId = decodeObjectId(buffer, offset + len)
 	len += objectId.len
 	let result = decodeTagNumberAndValue(buffer, offset + len)
 	len += result.len

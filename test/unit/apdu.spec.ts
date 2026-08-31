@@ -3,6 +3,12 @@ import assert from 'node:assert'
 
 import * as utils from './utils'
 import * as baApdu from '../../src/lib/apdu'
+import {
+	ConfirmedServiceChoice,
+	MaxApduLengthAccepted,
+	MaxSegmentsAccepted,
+	PduType,
+} from '../../src/lib/enum'
 
 test.describe('bacnet - APDU layer', () => {
 	test.describe('decodedType', () => {
@@ -189,11 +195,8 @@ test.describe('bacnet - APDU layer', () => {
 	})
 
 	test.describe('confirmed-request max-segments-accepted encoding', () => {
-		test('max-segments nibbles: SEGMENTS_64 = B\'110\' (64), SEGMENTS_65 = B\'111\' (>64)', () => {
-			const enums = require('../../src/lib/enum')
-			assert.strictEqual(enums.MaxSegmentsAccepted.SEGMENTS_65 >> 4, 7)
-
-			const { MaxSegmentsAccepted, MaxApduLengthAccepted, PduType, ConfirmedServiceChoice } = require('../../src/lib/enum')
+		test("max-segments nibbles: SEGMENTS_64 = B'110' (64), SEGMENTS_65 = B'111' (>64)", () => {
+			assert.strictEqual(MaxSegmentsAccepted.SEGMENTS_65 >> 4, 7)
 			const buffer = utils.getBuffer()
 			baApdu.encodeConfirmedServiceRequest(
 				buffer,

@@ -595,7 +595,10 @@ test.describe('bacnet - ASN1 layer', () => {
 					deviceIndentifier: { type: 8, instance: 123456 },
 				}),
 				// [0] analog-value,1  [1] present-value  [3] device,123456
-				[0x0c, 0x00, 0x80, 0x00, 0x01, 0x19, 0x55, 0x3c, 0x02, 0x01, 0xe2, 0x40],
+				[
+					0x0c, 0x00, 0x80, 0x00, 0x01, 0x19, 0x55, 0x3c, 0x02, 0x01,
+					0xe2, 0x40,
+				],
 			)
 		})
 
@@ -608,15 +611,30 @@ test.describe('bacnet - ASN1 layer', () => {
 					deviceIndentifier: { type: 8, instance: 0 },
 				}),
 				// [0] analog-value,1  [1] priority-array  [2] 5  [3] device,0
-				[0x0c, 0x00, 0x80, 0x00, 0x01, 0x19, 0x57, 0x29, 0x05, 0x3c, 0x02, 0x00, 0x00, 0x00],
+				[
+					0x0c, 0x00, 0x80, 0x00, 0x01, 0x19, 0x57, 0x29, 0x05, 0x3c,
+					0x02, 0x00, 0x00, 0x00,
+				],
 			)
 		})
 
 		test('decode round-trips device instance 0, max instance and array index losslessly', () => {
 			for (const ref of [
-				{ objectId: { type: 2, instance: 1 }, id: 85, deviceIndentifier: { type: 8, instance: 0 } },
-				{ objectId: { type: 2, instance: 1 }, id: 85, deviceIndentifier: { type: 8, instance: 4194303 } },
-				{ objectId: { type: 5, instance: 7301 }, id: 87, arrayIndex: 3 },
+				{
+					objectId: { type: 2, instance: 1 },
+					id: 85,
+					deviceIndentifier: { type: 8, instance: 0 },
+				},
+				{
+					objectId: { type: 2, instance: 1 },
+					id: 85,
+					deviceIndentifier: { type: 8, instance: 4194303 },
+				},
+				{
+					objectId: { type: 5, instance: 7301 },
+					id: 87,
+					arrayIndex: 3,
+				},
 				{ objectId: { type: 5, instance: 7301 }, id: 85 },
 			]) {
 				const buffer = { buffer: Buffer.alloc(100), offset: 0 }
@@ -631,10 +649,19 @@ test.describe('bacnet - ASN1 layer', () => {
 					20,
 					54,
 				) as any
-				assert.strictEqual(decoded.value.objectId.objectType, ref.objectId.type)
-				assert.strictEqual(decoded.value.objectId.instance, ref.objectId.instance)
+				assert.strictEqual(
+					decoded.value.objectId.objectType,
+					ref.objectId.type,
+				)
+				assert.strictEqual(
+					decoded.value.objectId.instance,
+					ref.objectId.instance,
+				)
 				assert.strictEqual(decoded.value.id.value, ref.id)
-				assert.strictEqual(decoded.value.arrayIndex, (ref as any).arrayIndex)
+				assert.strictEqual(
+					decoded.value.arrayIndex,
+					(ref as any).arrayIndex,
+				)
 				assert.deepStrictEqual(
 					decoded.value.deviceIndentifier,
 					(ref as any).deviceIndentifier,

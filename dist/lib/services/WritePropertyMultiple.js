@@ -62,7 +62,9 @@ class WritePropertyMultiple extends AbstractServices_1.BacnetService {
         const nonEmptyDays = days.filter((d) => d.length > 0);
         if (nonEmptyDays.length <= 1)
             return days[0];
-        return idx >= 0 && idx < days.length ? days[idx] : undefined;
+        return idx >= 0 && idx < days.length
+            ? days[idx]
+            : undefined;
     }
     static encode(buffer, objectId, values) {
         baAsn1.encodeContextObjectId(buffer, 0, objectId.type, objectId.instance);
@@ -198,7 +200,8 @@ class WritePropertyMultiple extends AbstractServices_1.BacnetService {
                 arrayIndex !== enum_1.ASN1_ARRAY_ALL &&
                 arrayIndex !== 0) {
                 const decodedException = baAsn1.decodeExceptionSchedule(buffer, offset + len, apduLen - len, 2);
-                if (!decodedException || !Array.isArray(decodedException.value)) {
+                if (!decodedException ||
+                    !Array.isArray(decodedException.value)) {
                     return undefined;
                 }
                 const selected = WritePropertyMultiple.pickIndexedEntry(decodedException.value, arrayIndex);

@@ -1649,7 +1649,7 @@ const decodeDeviceObjPropertyRef = (buffer, offset) => {
     if (!(0, exports.decodeIsContextTag)(buffer, offset + len, 0))
         return undefined;
     len++;
-    let objectId = (0, exports.decodeObjectId)(buffer, offset + len);
+    const objectId = (0, exports.decodeObjectId)(buffer, offset + len);
     len += objectId.len;
     let result = (0, exports.decodeTagNumberAndValue)(buffer, offset + len);
     len += result.len;

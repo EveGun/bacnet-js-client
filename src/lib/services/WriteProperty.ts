@@ -306,9 +306,7 @@ export default class WriteProperty extends BacnetService {
 		dayLabel: string,
 	) {
 		if (!Array.isArray(day)) {
-			throw new Error(
-				`Could not encode: ${dayLabel} should be an array`,
-			)
+			throw new Error(`Could not encode: ${dayLabel} should be an array`)
 		}
 		baAsn1.encodeOpeningTag(buffer, 0)
 		for (const [slotIndex, slot] of day.entries()) {
@@ -340,7 +338,11 @@ export default class WriteProperty extends BacnetService {
 			return
 		}
 		if (arrayIndex !== ASN1_ARRAY_ALL) {
-			if (!Number.isInteger(arrayIndex) || arrayIndex < 1 || arrayIndex > 7) {
+			if (
+				!Number.isInteger(arrayIndex) ||
+				arrayIndex < 1 ||
+				arrayIndex > 7
+			) {
 				throw new Error(
 					'Could not encode: weekly schedule index must be between 1 and 7',
 				)
@@ -550,9 +552,9 @@ export default class WriteProperty extends BacnetService {
 				'Could not encode: calendar date list does not support indexed access',
 			)
 		}
-		const normalizedValues = (Array.isArray(values) ? values : [
-			values,
-		]) as unknown as BACNetCalendarDateListPayload
+		const normalizedValues = (Array.isArray(values)
+			? values
+			: [values]) as unknown as BACNetCalendarDateListPayload
 		const dateListValues = normalizedValues
 		let entries: BACNetCalendarDateListPayload
 		if (!Array.isArray(values)) {

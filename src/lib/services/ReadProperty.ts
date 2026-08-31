@@ -42,7 +42,9 @@ export default class ReadProperty extends BacnetService {
 		const nonEmptyDays = (days as unknown[][]).filter((d) => d.length > 0)
 		// Many devices return a single indexed day payload encoded as day[0] only.
 		if (nonEmptyDays.length <= 1) return days[0] as unknown[]
-		return idx >= 0 && idx < days.length ? (days[idx] as unknown[]) : undefined
+		return idx >= 0 && idx < days.length
+			? (days[idx] as unknown[])
+			: undefined
 	}
 
 	public static encode(

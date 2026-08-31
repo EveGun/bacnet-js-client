@@ -237,7 +237,9 @@ class WriteProperty extends AbstractServices_1.BacnetService {
             return;
         }
         if (arrayIndex !== enum_1.ASN1_ARRAY_ALL) {
-            if (!Number.isInteger(arrayIndex) || arrayIndex < 1 || arrayIndex > 7) {
+            if (!Number.isInteger(arrayIndex) ||
+                arrayIndex < 1 ||
+                arrayIndex > 7) {
                 throw new Error('Could not encode: weekly schedule index must be between 1 and 7');
             }
             if (!Array.isArray(values)) {
@@ -356,9 +358,9 @@ class WriteProperty extends AbstractServices_1.BacnetService {
         if (arrayIndex !== enum_1.ASN1_ARRAY_ALL) {
             throw new Error('Could not encode: calendar date list does not support indexed access');
         }
-        const normalizedValues = (Array.isArray(values) ? values : [
-            values,
-        ]);
+        const normalizedValues = (Array.isArray(values)
+            ? values
+            : [values]);
         const dateListValues = normalizedValues;
         let entries;
         if (!Array.isArray(values)) {

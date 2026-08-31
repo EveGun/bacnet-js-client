@@ -3,7 +3,7 @@ import assert from 'node:assert'
 
 import * as utils from './utils'
 import * as baAsn1 from '../../src/lib/asn1'
-import { WritePropertyMultiple } from '../../src/lib/services'
+import { WriteProperty, WritePropertyMultiple } from '../../src/lib/services'
 import {
 	ApplicationTag,
 	ObjectType,
@@ -508,8 +508,16 @@ test.describe('bacnet - WritePropertyMultiple optional priority', () => {
 		assert.strictEqual(result.values[0].priority, 0)
 		// Byte-level: no context tag 3 follows the closing tag 2 of the value.
 		const bytes = buffer.buffer.subarray(0, buffer.offset)
-		assert.strictEqual(bytes[bytes.length - 1], 0x1f, 'ends with closing tag 1')
-		assert.strictEqual(bytes[bytes.length - 2], 0x2f, 'value closing tag 2 is last inside')
+		assert.strictEqual(
+			bytes[bytes.length - 1],
+			0x1f,
+			'ends with closing tag 1',
+		)
+		assert.strictEqual(
+			bytes[bytes.length - 2],
+			0x2f,
+			'value closing tag 2 is last inside',
+		)
 	})
 
 	test('an explicit priority still encodes and decodes', () => {
@@ -540,7 +548,6 @@ test.describe('bacnet - WritePropertyMultiple optional priority', () => {
 
 test.describe('bacnet - Timer complex datatypes (SCHED-VM-A 13.10.x.2)', () => {
 	test('List_Of_Object_Property_References round-trips through WriteProperty', () => {
-		const { WriteProperty } = require('../../src/lib/services')
 		const buffer = utils.getBuffer()
 		WriteProperty.encode(
 			buffer,
@@ -564,22 +571,29 @@ test.describe('bacnet - Timer complex datatypes (SCHED-VM-A 13.10.x.2)', () => {
 		assert(result)
 		const values = result.value.value
 		assert.strictEqual(values.length, 2)
-		assert.strictEqual(values[0].type, ApplicationTag.OBJECT_PROPERTY_REFERENCE)
+		assert.strictEqual(
+			values[0].type,
+			ApplicationTag.OBJECT_PROPERTY_REFERENCE,
+		)
 		assert.strictEqual(values[0].value.objectId.instance, 5)
 		assert.strictEqual(values[0].value.id.value ?? values[0].value.id, 85)
 		assert.strictEqual(values[1].value.objectId.objectType, 5)
 	})
 
 	test('Timer no-value ([0] NULL) encodes distinctly from application NULL and decodes back', () => {
-		const { WriteProperty } = require('../../src/lib/services')
-		const baAsn1 = require('../../src/lib/asn1')
 		// Encode: no-value must be context [0] length 0 (0x08); NULL stays 0x00.
 		const buffer = utils.getBuffer()
-		baAsn1.bacappEncodeApplicationData(buffer, { type: ApplicationTag.NO_VALUE, value: null })
+		baAsn1.bacappEncodeApplicationData(buffer, {
+			type: ApplicationTag.NO_VALUE,
+			value: null,
+		})
 		assert.strictEqual(buffer.offset, 1)
 		assert.strictEqual(buffer.buffer[0], 0x08)
 		const nullBuffer = utils.getBuffer()
-		baAsn1.bacappEncodeApplicationData(nullBuffer, { type: ApplicationTag.NULL, value: null })
+		baAsn1.bacappEncodeApplicationData(nullBuffer, {
+			type: ApplicationTag.NULL,
+			value: null,
+		})
 		assert.strictEqual(nullBuffer.buffer[0], 0x00)
 
 		// Round trip via WriteProperty of State_Change_Values[3].

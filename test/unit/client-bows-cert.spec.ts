@@ -663,7 +663,9 @@ test('bacnet - responder overflow protection (135.1 9.18.1.6)', async (t) => {
 					big as any,
 					{ segmentedResponseAccepted: sra },
 				)
-				const { pduType, data, apduOffset } = decodeSentPdu(sent[0].data)
+				const { pduType, data, apduOffset } = decodeSentPdu(
+					sent[0].data,
+				)
 				assert.strictEqual(pduType, PduType.ABORT)
 				assert.strictEqual(
 					baApdu.decodeAbort(data, apduOffset).reason,
@@ -823,7 +825,11 @@ test('bacnet - WriteProperty decoder enforces context-class tags (135.1 13.4.3)'
 })
 
 test('bacnet - unsupported confirmed services reject UNRECOGNIZED_SERVICE at the dispatch layer (9.39.1 audit)', async (t) => {
-	const expectReject = (sent: SentPacket[], invokeId: number, label: string) => {
+	const expectReject = (
+		sent: SentPacket[],
+		invokeId: number,
+		label: string,
+	) => {
 		assert.strictEqual(sent.length, 1, `${label}: exactly one reply`)
 		const { pduType, data, apduOffset } = decodeSentPdu(sent[0].data)
 		assert.strictEqual(pduType, PduType.REJECT, label)
@@ -840,61 +846,97 @@ test('bacnet - unsupported confirmed services reject UNRECOGNIZED_SERVICE at the
 		apdu.buffer[apdu.offset++] = 0x0c // lone opening of a context object id
 	}
 
-	await t.test('audit findings: ConfirmedCOVNotification and CreateObject', () => {
-		for (const [service, label] of [
-			[ConfirmedServiceChoice.CONFIRMED_COV_NOTIFICATION, 'ConfirmedCOVNotification'],
-			[ConfirmedServiceChoice.CREATE_OBJECT, 'CreateObject'],
-		] as Array<[number, string]>) {
-			// Malformed payload: previously INVALID_TAG.
-			{
-				const { client, sent } = createStubClient()
-				injectConfirmedRequest(client, service, 61, MALFORMED)
-				expectReject(sent, 61, `${label} malformed`)
+	await t.test(
+		'audit findings: ConfirmedCOVNotification and CreateObject',
+		() => {
+			for (const [service, label] of [
+				[
+					ConfirmedServiceChoice.CONFIRMED_COV_NOTIFICATION,
+					'ConfirmedCOVNotification',
+				],
+				[ConfirmedServiceChoice.CREATE_OBJECT, 'CreateObject'],
+			] as Array<[number, string]>) {
+				// Malformed payload: previously INVALID_TAG.
+				{
+					const { client, sent } = createStubClient()
+					injectConfirmedRequest(client, service, 61, MALFORMED)
+					expectReject(sent, 61, `${label} malformed`)
+				}
+				// Well-formed-looking payload with trailing octets: previously
+				// TOO_MANY_ARGUMENTS.
+				{
+					const { client, sent } = createStubClient()
+					injectConfirmedRequest(client, service, 62, undefined, 4)
+					expectReject(sent, 62, `${label} trailing`)
+				}
 			}
-			// Well-formed-looking payload with trailing octets: previously
-			// TOO_MANY_ARGUMENTS.
-			{
-				const { client, sent } = createStubClient()
-				injectConfirmedRequest(client, service, 62, undefined, 4)
-				expectReject(sent, 62, `${label} trailing`)
-			}
-		}
-	})
+		},
+	)
 
-	await t.test('full sweep: every confirmed service choice without a handler', () => {
-		const services = Object.values(ConfirmedServiceChoice).filter(
-			(v): v is number => Number.isInteger(v as number),
-		)
-		assert.ok(services.length >= 25, 'sweep covers the service catalogue')
-		for (const service of services) {
-			const { client, sent } = createStubClient()
-			injectConfirmedRequest(client, service, 63, MALFORMED)
-			expectReject(sent, 63, `service ${service}`)
-		}
-	})
-
-	await t.test('supported services keep their 13.4.x parser behaviour', () => {
-		// Malformed payload of a SUPPORTED service still rejects INVALID_TAG.
-		{
-			const { client, sent } = createStubClient()
-			client.on('readProperty', () => {})
-			injectConfirmedRequest(client, ConfirmedServiceChoice.READ_PROPERTY, 64, MALFORMED)
-			const { pduType, data, apduOffset } = decodeSentPdu(sent[0].data)
-			assert.strictEqual(pduType, PduType.REJECT)
-			assert.strictEqual(baApdu.decodeAbort(data, apduOffset).reason, RejectReason.INVALID_TAG)
-		}
-		// Valid payload of a supported service still reaches the listener.
-		{
-			const { client, sent } = createStubClient()
-			const seen: any[] = []
-			client.on('readProperty', (msg: any) => seen.push(msg))
-			injectConfirmedRequest(client, ConfirmedServiceChoice.READ_PROPERTY, 65, (apdu) =>
-				ReadProperty.encode(apdu, 8, 1, 77, 0xffffffff),
+	await t.test(
+		'full sweep: every confirmed service choice without a handler',
+		() => {
+			const services = Object.values(ConfirmedServiceChoice).filter(
+				(v): v is number => Number.isInteger(v as number),
 			)
-			assert.strictEqual(seen.length, 1, 'supported service dispatched to the listener')
-			assert.strictEqual(sent.length, 0, 'no reject for a valid supported request')
-		}
-	})
+			assert.ok(
+				services.length >= 25,
+				'sweep covers the service catalogue',
+			)
+			for (const service of services) {
+				const { client, sent } = createStubClient()
+				injectConfirmedRequest(client, service, 63, MALFORMED)
+				expectReject(sent, 63, `service ${service}`)
+			}
+		},
+	)
+
+	await t.test(
+		'supported services keep their 13.4.x parser behaviour',
+		() => {
+			// Malformed payload of a SUPPORTED service still rejects INVALID_TAG.
+			{
+				const { client, sent } = createStubClient()
+				client.on('readProperty', () => {})
+				injectConfirmedRequest(
+					client,
+					ConfirmedServiceChoice.READ_PROPERTY,
+					64,
+					MALFORMED,
+				)
+				const { pduType, data, apduOffset } = decodeSentPdu(
+					sent[0].data,
+				)
+				assert.strictEqual(pduType, PduType.REJECT)
+				assert.strictEqual(
+					baApdu.decodeAbort(data, apduOffset).reason,
+					RejectReason.INVALID_TAG,
+				)
+			}
+			// Valid payload of a supported service still reaches the listener.
+			{
+				const { client, sent } = createStubClient()
+				const seen: any[] = []
+				client.on('readProperty', (msg: any) => seen.push(msg))
+				injectConfirmedRequest(
+					client,
+					ConfirmedServiceChoice.READ_PROPERTY,
+					65,
+					(apdu) => ReadProperty.encode(apdu, 8, 1, 77, 0xffffffff),
+				)
+				assert.strictEqual(
+					seen.length,
+					1,
+					'supported service dispatched to the listener',
+				)
+				assert.strictEqual(
+					sent.length,
+					0,
+					'no reject for a valid supported request',
+				)
+			}
+		},
+	)
 })
 
 test('bacnet - responses to remote-origin requests carry Hop Count 255 (BTL 10.1.1)', async (t) => {
@@ -904,48 +946,81 @@ test('bacnet - responses to remote-origin requests carry Hop Count 255 (BTL 10.1
 		adr: [0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f],
 	}
 
-	await t.test('npdu.encode: omitted hop count defaults to 255 with a destination specifier', () => {
-		const withDefault: EncodeBuffer = { buffer: Buffer.alloc(64), offset: 0 }
-		baNpdu.encode(withDefault, 0, ROUTED as any)
-		const decoded = baNpdu.decode(withDefault.buffer, 0)
-		assert.ok(decoded)
-		assert.strictEqual(decoded.destination?.net, 1234)
-		assert.deepStrictEqual(decoded.destination?.adr, ROUTED.adr)
-		assert.strictEqual(decoded.hopCount, 255, 'originating NPDU initializes Hop Count to 255')
+	await t.test(
+		'npdu.encode: omitted hop count defaults to 255 with a destination specifier',
+		() => {
+			const withDefault: EncodeBuffer = {
+				buffer: Buffer.alloc(64),
+				offset: 0,
+			}
+			baNpdu.encode(withDefault, 0, ROUTED as any)
+			const decoded = baNpdu.decode(withDefault.buffer, 0)
+			assert.ok(decoded)
+			assert.strictEqual(decoded.destination?.net, 1234)
+			assert.deepStrictEqual(decoded.destination?.adr, ROUTED.adr)
+			assert.strictEqual(
+				decoded.hopCount,
+				255,
+				'originating NPDU initializes Hop Count to 255',
+			)
 
-		// Explicit values (router semantics) are honoured untouched.
-		const explicit: EncodeBuffer = { buffer: Buffer.alloc(64), offset: 0 }
-		baNpdu.encode(explicit, 0, ROUTED as any, undefined, 42)
-		assert.strictEqual(baNpdu.decode(explicit.buffer, 0)!.hopCount, 42)
+			// Explicit values (router semantics) are honoured untouched.
+			const explicit: EncodeBuffer = {
+				buffer: Buffer.alloc(64),
+				offset: 0,
+			}
+			baNpdu.encode(explicit, 0, ROUTED as any, undefined, 42)
+			assert.strictEqual(baNpdu.decode(explicit.buffer, 0)!.hopCount, 42)
 
-		// No destination specifier -> no hop-count octet at all.
-		const local: EncodeBuffer = { buffer: Buffer.alloc(64), offset: 0 }
-		baNpdu.encode(local, 0, { address: DEVICE_A } as any)
-		assert.strictEqual(baNpdu.decode(local.buffer, 0)!.hopCount, 0)
-	})
+			// No destination specifier -> no hop-count octet at all.
+			const local: EncodeBuffer = { buffer: Buffer.alloc(64), offset: 0 }
+			baNpdu.encode(local, 0, { address: DEVICE_A } as any)
+			assert.strictEqual(baNpdu.decode(local.buffer, 0)!.hopCount, 0)
+		},
+	)
 
-	await t.test('ComplexACK back to a remote SNET/SADR: DNET/DADR preserved, Hop Count 255', () => {
-		const { client, sent } = createStubClient()
-		client.readPropertyResponse(
-			ROUTED,
-			71,
-			{ type: 8, instance: 1 },
-			{ id: 77, index: 0xffffffff },
-			[{ type: ApplicationTag.CHARACTER_STRING, value: 'Evolo Gateway' }],
-		)
-		assert.strictEqual(sent.length, 1)
-		const data = sent[0].data
-		const bvlc = baBvlc.decode(data, 0)!
-		const npdu = baNpdu.decode(data, bvlc.len)!
-		assert.strictEqual(npdu.destination?.net, 1234, 'DNET = request SNET')
-		assert.deepStrictEqual(npdu.destination?.adr, ROUTED.adr, 'DADR = request SADR')
-		assert.strictEqual(npdu.hopCount, 255, 'Hop Count initialized to 255, not 0')
-		assert.strictEqual(
-			data[bvlc.len + npdu.len] & PDU_TYPE_MASK,
-			PduType.COMPLEX_ACK,
-			'the APDU is still the ComplexACK',
-		)
-	})
+	await t.test(
+		'ComplexACK back to a remote SNET/SADR: DNET/DADR preserved, Hop Count 255',
+		() => {
+			const { client, sent } = createStubClient()
+			client.readPropertyResponse(
+				ROUTED,
+				71,
+				{ type: 8, instance: 1 },
+				{ id: 77, index: 0xffffffff },
+				[
+					{
+						type: ApplicationTag.CHARACTER_STRING,
+						value: 'Evolo Gateway',
+					},
+				],
+			)
+			assert.strictEqual(sent.length, 1)
+			const data = sent[0].data
+			const bvlc = baBvlc.decode(data, 0)!
+			const npdu = baNpdu.decode(data, bvlc.len)!
+			assert.strictEqual(
+				npdu.destination?.net,
+				1234,
+				'DNET = request SNET',
+			)
+			assert.deepStrictEqual(
+				npdu.destination?.adr,
+				ROUTED.adr,
+				'DADR = request SADR',
+			)
+			assert.strictEqual(
+				npdu.hopCount,
+				255,
+				'Hop Count initialized to 255, not 0',
+			)
+			assert.strictEqual(
+				data[bvlc.len + npdu.len] & PDU_TYPE_MASK,
+				PduType.COMPLEX_ACK,
+				'the APDU is still the ComplexACK',
+			)
+		},
+	)
 })
 
 test('bacnet - NPDUs addressed to a foreign DNET are dropped before dispatch (BTL 10.6.1)', async (t) => {
@@ -986,41 +1061,74 @@ test('bacnet - NPDUs addressed to a foreign DNET are dropped before dispatch (BT
 		ReadProperty.encode(apdu, 8, 1, 77, 0xffffffff)
 	}
 
-	await t.test('unconfirmed (Who-Is) with DNET=1234 is ignored — no I-Am, no dispatch', () => {
-		const { client, sent } = createStubClient()
-		const seen: any[] = []
-		client.on('whoIs', (msg: any) => seen.push(msg))
-		injectNpdu(client, { destination: { net: 1234 } }, whoIsApdu)
-		assert.strictEqual(seen.length, 0, 'not dispatched to the application layer')
-		assert.strictEqual(sent.length, 0, 'nothing sent in reply')
-	})
+	await t.test(
+		'unconfirmed (Who-Is) with DNET=1234 is ignored — no I-Am, no dispatch',
+		() => {
+			const { client, sent } = createStubClient()
+			const seen: any[] = []
+			client.on('whoIs', (msg: any) => seen.push(msg))
+			injectNpdu(client, { destination: { net: 1234 } }, whoIsApdu)
+			assert.strictEqual(
+				seen.length,
+				0,
+				'not dispatched to the application layer',
+			)
+			assert.strictEqual(sent.length, 0, 'nothing sent in reply')
+		},
+	)
 
-	await t.test('confirmed (ReadProperty) with DNET=1234 + DADR is ignored — no ACK, no Reject', () => {
-		const { client, sent } = createStubClient()
-		const seen: any[] = []
-		client.on('readProperty', (msg: any) => seen.push(msg))
-		injectNpdu(client, { destination: FOREIGN }, readPropertyApdu)
-		assert.strictEqual(seen.length, 0, 'not dispatched to the application layer')
-		assert.strictEqual(sent.length, 0, 'no response of any kind')
-	})
+	await t.test(
+		'confirmed (ReadProperty) with DNET=1234 + DADR is ignored — no ACK, no Reject',
+		() => {
+			const { client, sent } = createStubClient()
+			const seen: any[] = []
+			client.on('readProperty', (msg: any) => seen.push(msg))
+			injectNpdu(client, { destination: FOREIGN }, readPropertyApdu)
+			assert.strictEqual(
+				seen.length,
+				0,
+				'not dispatched to the application layer',
+			)
+			assert.strictEqual(sent.length, 0, 'no response of any kind')
+		},
+	)
 
 	await t.test('global broadcast (DNET=0xFFFF) still dispatches', () => {
 		const { client, sent } = createStubClient()
 		const seen: any[] = []
 		client.on('whoIs', (msg: any) => seen.push(msg))
 		injectNpdu(client, { destination: { net: 0xffff } }, whoIsApdu)
-		assert.strictEqual(seen.length, 1, 'global broadcast reaches the application layer')
+		assert.strictEqual(
+			seen.length,
+			1,
+			'global broadcast reaches the application layer',
+		)
 	})
 
-	await t.test('remote SOURCE only (BTL 10.1.1) still dispatches and keeps the routing info', () => {
-		const { client, sent } = createStubClient()
-		const seen: any[] = []
-		client.on('readProperty', (msg: any) => seen.push(msg))
-		injectNpdu(client, { source: FOREIGN }, readPropertyApdu)
-		assert.strictEqual(seen.length, 1, 'request to the LOCAL device is processed')
-		assert.strictEqual(seen[0].header.sender.net, 1234, 'response routing SNET preserved')
-		assert.deepStrictEqual(seen[0].header.sender.adr, FOREIGN.adr, 'response routing SADR preserved')
-	})
+	await t.test(
+		'remote SOURCE only (BTL 10.1.1) still dispatches and keeps the routing info',
+		() => {
+			const { client, sent } = createStubClient()
+			const seen: any[] = []
+			client.on('readProperty', (msg: any) => seen.push(msg))
+			injectNpdu(client, { source: FOREIGN }, readPropertyApdu)
+			assert.strictEqual(
+				seen.length,
+				1,
+				'request to the LOCAL device is processed',
+			)
+			assert.strictEqual(
+				seen[0].header.sender.net,
+				1234,
+				'response routing SNET preserved',
+			)
+			assert.deepStrictEqual(
+				seen[0].header.sender.adr,
+				FOREIGN.adr,
+				'response routing SADR preserved',
+			)
+		},
+	)
 })
 
 test('bacnet - confirmed requests received as BROADCAST are ignored entirely (BTL 13.9.2)', async (t) => {
@@ -1055,58 +1163,106 @@ test('bacnet - confirmed requests received as BROADCAST are ignored entirely (BT
 		ReadProperty.encode(apdu, 8, 1, 77, 0xffffffff)
 	}
 	const whoIsApdu = (apdu: EncodeBuffer) => {
-		baApdu.encodeUnconfirmedServiceRequest(apdu, PduType.UNCONFIRMED_REQUEST, 8)
+		baApdu.encodeUnconfirmedServiceRequest(
+			apdu,
+			PduType.UNCONFIRMED_REQUEST,
+			8,
+		)
 	}
 
-	await t.test('LOCAL broadcast confirmed ReadProperty: no dispatch, no reply of any kind', () => {
-		const { client, sent } = createStubClient()
-		const seen: any[] = []
-		client.on('readProperty', (msg: any) => seen.push(msg))
-		injectVia(client, BvlcResultPurpose.ORIGINAL_BROADCAST_NPDU, {}, rpApdu)
-		assert.strictEqual(seen.length, 0, 'not dispatched')
-		assert.strictEqual(sent.length, 0, 'no ACK/Error/Reject/Abort')
-	})
+	await t.test(
+		'LOCAL broadcast confirmed ReadProperty: no dispatch, no reply of any kind',
+		() => {
+			const { client, sent } = createStubClient()
+			const seen: any[] = []
+			client.on('readProperty', (msg: any) => seen.push(msg))
+			injectVia(
+				client,
+				BvlcResultPurpose.ORIGINAL_BROADCAST_NPDU,
+				{},
+				rpApdu,
+			)
+			assert.strictEqual(seen.length, 0, 'not dispatched')
+			assert.strictEqual(sent.length, 0, 'no ACK/Error/Reject/Abort')
+		},
+	)
 
-	await t.test('GLOBAL broadcast (DNET=65535) confirmed ReadProperty: no dispatch, no reply', () => {
-		const { client, sent } = createStubClient()
-		const seen: any[] = []
-		client.on('readProperty', (msg: any) => seen.push(msg))
-		injectVia(
-			client,
-			BvlcResultPurpose.ORIGINAL_UNICAST_NPDU,
-			{ destination: { net: 0xffff } },
-			rpApdu,
-		)
-		assert.strictEqual(seen.length, 0, 'not dispatched')
-		assert.strictEqual(sent.length, 0, 'no reply of any kind')
-	})
+	await t.test(
+		'GLOBAL broadcast (DNET=65535) confirmed ReadProperty: no dispatch, no reply',
+		() => {
+			const { client, sent } = createStubClient()
+			const seen: any[] = []
+			client.on('readProperty', (msg: any) => seen.push(msg))
+			injectVia(
+				client,
+				BvlcResultPurpose.ORIGINAL_UNICAST_NPDU,
+				{ destination: { net: 0xffff } },
+				rpApdu,
+			)
+			assert.strictEqual(seen.length, 0, 'not dispatched')
+			assert.strictEqual(sent.length, 0, 'no reply of any kind')
+		},
+	)
 
-	await t.test('unconfirmed broadcasts still dispatch (local and global)', () => {
-		const { client } = createStubClient()
-		const seen: any[] = []
-		client.on('whoIs', (msg: any) => seen.push(msg))
-		injectVia(client, BvlcResultPurpose.ORIGINAL_BROADCAST_NPDU, {}, whoIsApdu)
-		injectVia(
-			client,
-			BvlcResultPurpose.ORIGINAL_BROADCAST_NPDU,
-			{ destination: { net: 0xffff } },
-			whoIsApdu,
-		)
-		assert.strictEqual(seen.length, 2, 'local + global unconfirmed both dispatch')
-	})
+	await t.test(
+		'unconfirmed broadcasts still dispatch (local and global)',
+		() => {
+			const { client } = createStubClient()
+			const seen: any[] = []
+			client.on('whoIs', (msg: any) => seen.push(msg))
+			injectVia(
+				client,
+				BvlcResultPurpose.ORIGINAL_BROADCAST_NPDU,
+				{},
+				whoIsApdu,
+			)
+			injectVia(
+				client,
+				BvlcResultPurpose.ORIGINAL_BROADCAST_NPDU,
+				{ destination: { net: 0xffff } },
+				whoIsApdu,
+			)
+			assert.strictEqual(
+				seen.length,
+				2,
+				'local + global unconfirmed both dispatch',
+			)
+		},
+	)
 
-	await t.test('confirmed UNICAST still dispatches — incl. with a remote SOURCE', () => {
-		const { client } = createStubClient()
-		const seen: any[] = []
-		client.on('readProperty', (msg: any) => seen.push(msg))
-		injectVia(client, BvlcResultPurpose.ORIGINAL_UNICAST_NPDU, {}, rpApdu)
-		injectVia(
-			client,
-			BvlcResultPurpose.ORIGINAL_UNICAST_NPDU,
-			{ source: { net: 1234, adr: [0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f] } },
-			rpApdu,
-		)
-		assert.strictEqual(seen.length, 2, 'unicast confirmed requests are unaffected')
-		assert.strictEqual(seen[1].header.sender.net, 1234, 'remote-source routing info preserved')
-	})
+	await t.test(
+		'confirmed UNICAST still dispatches — incl. with a remote SOURCE',
+		() => {
+			const { client } = createStubClient()
+			const seen: any[] = []
+			client.on('readProperty', (msg: any) => seen.push(msg))
+			injectVia(
+				client,
+				BvlcResultPurpose.ORIGINAL_UNICAST_NPDU,
+				{},
+				rpApdu,
+			)
+			injectVia(
+				client,
+				BvlcResultPurpose.ORIGINAL_UNICAST_NPDU,
+				{
+					source: {
+						net: 1234,
+						adr: [0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f],
+					},
+				},
+				rpApdu,
+			)
+			assert.strictEqual(
+				seen.length,
+				2,
+				'unicast confirmed requests are unaffected',
+			)
+			assert.strictEqual(
+				seen[1].header.sender.net,
+				1234,
+				'remote-source routing info preserved',
+			)
+		},
+	)
 })
