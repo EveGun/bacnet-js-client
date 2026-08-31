@@ -105,7 +105,7 @@ const encode = (buffer, funct, destination, source, hopCount, networkMsgType, ve
         encodeTarget(buffer, source);
     }
     if (hasDestination) {
-        buffer.buffer[buffer.offset++] = hopCount || 0;
+        buffer.buffer[buffer.offset++] = hopCount ?? 0xff;
     }
     if ((funct & enum_1.NpduControlBit.NETWORK_LAYER_MESSAGE) > 0) {
         buffer.buffer[buffer.offset++] = networkMsgType || 0;
