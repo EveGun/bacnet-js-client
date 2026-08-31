@@ -1022,3 +1022,91 @@ test('bacnet - NPDUs addressed to a foreign DNET are dropped before dispatch (BT
 		assert.deepStrictEqual(seen[0].header.sender.adr, FOREIGN.adr, 'response routing SADR preserved')
 	})
 })
+
+test('bacnet - confirmed requests received as BROADCAST are ignored entirely (BTL 13.9.2)', async (t) => {
+	const injectVia = (
+		client: any,
+		func: number,
+		opts: { destination?: any; source?: any },
+		buildApdu: (apdu: EncodeBuffer) => void,
+	) => {
+		const frame: EncodeBuffer = { buffer: Buffer.alloc(256), offset: 0 }
+		baNpdu.encode(frame, 0, opts.destination, opts.source, undefined)
+		buildApdu(frame)
+		client._handleNpdu(frame.buffer, 0, frame.offset, {
+			func,
+			sender: { address: DEVICE_A },
+			apduType: 0,
+			expectingReply: true,
+			confirmedService: false,
+		})
+	}
+	const rpApdu = (apdu: EncodeBuffer) => {
+		baApdu.encodeConfirmedServiceRequest(
+			apdu,
+			PduType.CONFIRMED_REQUEST,
+			ConfirmedServiceChoice.READ_PROPERTY,
+			MaxSegmentsAccepted.SEGMENTS_0,
+			MaxApduLengthAccepted.OCTETS_1476,
+			52,
+			0,
+			0,
+		)
+		ReadProperty.encode(apdu, 8, 1, 77, 0xffffffff)
+	}
+	const whoIsApdu = (apdu: EncodeBuffer) => {
+		baApdu.encodeUnconfirmedServiceRequest(apdu, PduType.UNCONFIRMED_REQUEST, 8)
+	}
+
+	await t.test('LOCAL broadcast confirmed ReadProperty: no dispatch, no reply of any kind', () => {
+		const { client, sent } = createStubClient()
+		const seen: any[] = []
+		client.on('readProperty', (msg: any) => seen.push(msg))
+		injectVia(client, BvlcResultPurpose.ORIGINAL_BROADCAST_NPDU, {}, rpApdu)
+		assert.strictEqual(seen.length, 0, 'not dispatched')
+		assert.strictEqual(sent.length, 0, 'no ACK/Error/Reject/Abort')
+	})
+
+	await t.test('GLOBAL broadcast (DNET=65535) confirmed ReadProperty: no dispatch, no reply', () => {
+		const { client, sent } = createStubClient()
+		const seen: any[] = []
+		client.on('readProperty', (msg: any) => seen.push(msg))
+		injectVia(
+			client,
+			BvlcResultPurpose.ORIGINAL_UNICAST_NPDU,
+			{ destination: { net: 0xffff } },
+			rpApdu,
+		)
+		assert.strictEqual(seen.length, 0, 'not dispatched')
+		assert.strictEqual(sent.length, 0, 'no reply of any kind')
+	})
+
+	await t.test('unconfirmed broadcasts still dispatch (local and global)', () => {
+		const { client } = createStubClient()
+		const seen: any[] = []
+		client.on('whoIs', (msg: any) => seen.push(msg))
+		injectVia(client, BvlcResultPurpose.ORIGINAL_BROADCAST_NPDU, {}, whoIsApdu)
+		injectVia(
+			client,
+			BvlcResultPurpose.ORIGINAL_BROADCAST_NPDU,
+			{ destination: { net: 0xffff } },
+			whoIsApdu,
+		)
+		assert.strictEqual(seen.length, 2, 'local + global unconfirmed both dispatch')
+	})
+
+	await t.test('confirmed UNICAST still dispatches — incl. with a remote SOURCE', () => {
+		const { client } = createStubClient()
+		const seen: any[] = []
+		client.on('readProperty', (msg: any) => seen.push(msg))
+		injectVia(client, BvlcResultPurpose.ORIGINAL_UNICAST_NPDU, {}, rpApdu)
+		injectVia(
+			client,
+			BvlcResultPurpose.ORIGINAL_UNICAST_NPDU,
+			{ source: { net: 1234, adr: [0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f] } },
+			rpApdu,
+		)
+		assert.strictEqual(seen.length, 2, 'unicast confirmed requests are unaffected')
+		assert.strictEqual(seen[1].header.sender.net, 1234, 'remote-source routing info preserved')
+	})
+})

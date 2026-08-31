@@ -2212,6 +2212,22 @@ export default class BACnetClient extends TypedEventEmitter<BACnetClientEvents> 
 			result.funct & NpduControlBit.EXPECTING_REPLY
 		)
 
+		// ASHRAE 135 5.4.4 / BTL 13.9.2: a CONFIRMED request received as a
+		// broadcast — locally (Original-Broadcast-NPDU) or globally
+		// (DNET 0xFFFF) — is ignored ENTIRELY: no ACK, Error, Reject or
+		// Abort leaves the device. Unconfirmed broadcasts, confirmed
+		// unicast (incl. remote-source SNET/SADR requests) and the BBMD
+		// paths are untouched.
+		if (
+			(header.apduType & PDU_TYPE_MASK) === PduType.CONFIRMED_REQUEST &&
+			(header.func === BvlcResultPurpose.ORIGINAL_BROADCAST_NPDU ||
+				result.destination?.net === 0xffff)
+		) {
+			return trace(
+				'Received confirmed request as broadcast -> Drop package',
+			)
+		}
+
 		if (result.source) {
 			header.sender.net = result.source.net
 			header.sender.adr = result.source.adr
