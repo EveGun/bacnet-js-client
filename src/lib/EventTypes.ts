@@ -25,6 +25,7 @@ import {
 	WhoHasPayload,
 	TimeSyncPayload,
 	IHavePayload,
+	ConfirmedTransactionOutcome,
 	BACNetObjectID,
 	BACNetPropertyID,
 	BACNetAppData,
@@ -214,6 +215,8 @@ export interface BACnetClientEvents {
 		content: BaseEventContent & { payload: TimeSyncPayload },
 	) => void
 	iHave: (content: BaseEventContent & { payload: IHavePayload }) => void
+	/** Outcome of a locally initiated confirmed request (observability). */
+	transaction: (outcome: ConfirmedTransactionOutcome) => void
 }
 
 export type BACnetEventsMap = {

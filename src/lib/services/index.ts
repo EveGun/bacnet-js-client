@@ -74,6 +74,9 @@ const ServicesMap: Record<
 	typeof BacnetService | typeof BacnetAckService
 > = {
 	addListElement: AddListElement,
+	// RemoveListElement shares AddListElement's wire format (ASHRAE 135
+	// §15.2/§15.3 — identical request structure, different service choice).
+	removeListElement: AddListElement,
 	alarmAcknowledge: AlarmAcknowledge,
 	alarmSummary: AlarmSummary,
 	atomicReadFile: AtomicReadFile,

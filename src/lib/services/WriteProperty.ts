@@ -306,9 +306,7 @@ export default class WriteProperty extends BacnetService {
 		dayLabel: string,
 	) {
 		if (!Array.isArray(day)) {
-			throw new Error(
-				`Could not encode: ${dayLabel} should be an array`,
-			)
+			throw new Error(`Could not encode: ${dayLabel} should be an array`)
 		}
 		baAsn1.encodeOpeningTag(buffer, 0)
 		for (const [slotIndex, slot] of day.entries()) {
@@ -340,7 +338,11 @@ export default class WriteProperty extends BacnetService {
 			return
 		}
 		if (arrayIndex !== ASN1_ARRAY_ALL) {
-			if (!Number.isInteger(arrayIndex) || arrayIndex < 1 || arrayIndex > 7) {
+			if (
+				!Number.isInteger(arrayIndex) ||
+				arrayIndex < 1 ||
+				arrayIndex > 7
+			) {
 				throw new Error(
 					'Could not encode: weekly schedule index must be between 1 and 7',
 				)
@@ -540,7 +542,7 @@ export default class WriteProperty extends BacnetService {
 		}
 	}
 
-	private static encodeCalendarDateListPayload(
+	public static encodeCalendarDateListPayload(
 		buffer: EncodeBuffer,
 		values: BACNetCalendarDateListWriteValue,
 		arrayIndex: number,
@@ -550,9 +552,9 @@ export default class WriteProperty extends BacnetService {
 				'Could not encode: calendar date list does not support indexed access',
 			)
 		}
-		const normalizedValues = (Array.isArray(values) ? values : [
-			values,
-		]) as unknown as BACNetCalendarDateListPayload
+		const normalizedValues = (Array.isArray(values)
+			? values
+			: [values]) as unknown as BACNetCalendarDateListPayload
 		const dateListValues = normalizedValues
 		let entries: BACNetCalendarDateListPayload
 		if (!Array.isArray(values)) {
@@ -581,6 +583,43 @@ export default class WriteProperty extends BacnetService {
 					'Could not encode: unsupported calendar date list entry format',
 				)
 			}
+		}
+	}
+
+	/**
+	 * Timer State_Change_Values (ARRAY[7] of BACnetTimerStateChangeValue).
+	 * The CHOICE has no bare application-datum alternative: ordinary datums
+	 * (including an application NULL) go in the constructed-value [1]
+	 * wrapper, and the no-value alternative is the bare [0] NULL (0x08) —
+	 * symmetric with the property-specific decode route.
+	 */
+	private static encodeStateChangeValuesPayload(
+		buffer: EncodeBuffer,
+		values: BACNetWritePropertyValues,
+		arrayIndex: number,
+	) {
+		if (arrayIndex === 0) {
+			WriteProperty.encodeArrayLengthPayload(
+				buffer,
+				'state change values',
+				values,
+			)
+			return
+		}
+		if (!Array.isArray(values)) {
+			throw new Error(
+				'Could not encode: state change values should be an array of BACnet application data',
+			)
+		}
+		for (const value of values as BACNetAppData[]) {
+			if (value?.type === ApplicationTag.NO_VALUE) {
+				// no-value CHOICE [0]: bare context NULL.
+				baAsn1.bacappEncodeApplicationData(buffer, value)
+				continue
+			}
+			baAsn1.encodeOpeningTag(buffer, 1)
+			baAsn1.bacappEncodeApplicationData(buffer, value)
+			baAsn1.encodeClosingTag(buffer, 1)
 		}
 	}
 
@@ -631,6 +670,14 @@ export default class WriteProperty extends BacnetService {
 			WriteProperty.encodeCalendarDateListPayload(
 				buffer,
 				values as BACNetCalendarDateListWriteValue,
+				arrayIndex,
+			)
+			return
+		}
+		if (propertyId === PropertyIdentifier.STATE_CHANGE_VALUES) {
+			WriteProperty.encodeStateChangeValuesPayload(
+				buffer,
+				values,
 				arrayIndex,
 			)
 			return
@@ -702,10 +749,13 @@ export default class WriteProperty extends BacnetService {
 		}
 
 		len += decodedValue.len
+		// Property identifier and optional array index are context tags 1
+		// and 2 (ASHRAE 135 - 15.9.1.1); an application-class tag with the
+		// same number is an invalid tag (135.1 - 13.4.3).
+		if (!baAsn1.decodeIsContextTag(buffer, offset + len, 1))
+			return undefined
 		result = baAsn1.decodeTagNumberAndValue(buffer, offset + len)
 		len += result.len
-
-		if (result.tagNumber !== 1) return undefined
 
 		decodedValue = baAsn1.decodeEnumerated(
 			buffer,
@@ -716,7 +766,10 @@ export default class WriteProperty extends BacnetService {
 		value.property.id = decodedValue.value
 
 		result = baAsn1.decodeTagNumberAndValue(buffer, offset + len)
-		if (result.tagNumber === 2) {
+		if (
+			result.tagNumber === 2 &&
+			baAsn1.decodeIsContextTag(buffer, offset + len, 2)
+		) {
 			len += result.len
 			decodedValue = baAsn1.decodeUnsigned(
 				buffer,
@@ -759,7 +812,10 @@ export default class WriteProperty extends BacnetService {
 
 		if (len < apduLen) {
 			result = baAsn1.decodeTagNumberAndValue(buffer, offset + len)
-			if (result.tagNumber === 4) {
+			if (
+				result.tagNumber === 4 &&
+				baAsn1.decodeIsContextTag(buffer, offset + len, 4)
+			) {
 				len += result.len
 				decodedValue = baAsn1.decodeUnsigned(
 					buffer,

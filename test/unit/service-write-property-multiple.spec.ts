@@ -3,7 +3,7 @@ import assert from 'node:assert'
 
 import * as utils from './utils'
 import * as baAsn1 from '../../src/lib/asn1'
-import { WritePropertyMultiple } from '../../src/lib/services'
+import { WriteProperty, WritePropertyMultiple } from '../../src/lib/services'
 import {
 	ApplicationTag,
 	ObjectType,
@@ -479,5 +479,137 @@ test.describe('bacnet - Services layer WritePropertyMultiple unit', () => {
 			buffer.offset,
 		)
 		assert.equal(result, undefined)
+	})
+})
+
+test.describe('bacnet - WritePropertyMultiple optional priority', () => {
+	test('an absent priority is omitted from the wire (no Unsigned 0)', () => {
+		const buffer = utils.getBuffer()
+		WritePropertyMultiple.encode(
+			buffer,
+			{ type: ObjectType.ANALOG_VALUE, instance: 2 },
+			[
+				{
+					property: {
+						id: PropertyIdentifier.HIGH_LIMIT,
+						index: 0xffffffff,
+					},
+					value: [{ type: ApplicationTag.REAL, value: 35 }],
+				} as any,
+			],
+		)
+		const result = WritePropertyMultiple.decode(
+			buffer.buffer,
+			0,
+			buffer.offset,
+		)
+		assert(result)
+		// Decoder reports "no priority" (ASN1_NO_PRIORITY = 0) — nothing was encoded.
+		assert.strictEqual(result.values[0].priority, 0)
+		// Byte-level: no context tag 3 follows the closing tag 2 of the value.
+		const bytes = buffer.buffer.subarray(0, buffer.offset)
+		assert.strictEqual(
+			bytes[bytes.length - 1],
+			0x1f,
+			'ends with closing tag 1',
+		)
+		assert.strictEqual(
+			bytes[bytes.length - 2],
+			0x2f,
+			'value closing tag 2 is last inside',
+		)
+	})
+
+	test('an explicit priority still encodes and decodes', () => {
+		const buffer = utils.getBuffer()
+		WritePropertyMultiple.encode(
+			buffer,
+			{ type: ObjectType.ANALOG_VALUE, instance: 2 },
+			[
+				{
+					property: {
+						id: PropertyIdentifier.PRESENT_VALUE,
+						index: 0xffffffff,
+					},
+					value: [{ type: ApplicationTag.REAL, value: 21 }],
+					priority: 16,
+				} as any,
+			],
+		)
+		const result = WritePropertyMultiple.decode(
+			buffer.buffer,
+			0,
+			buffer.offset,
+		)
+		assert(result)
+		assert.strictEqual(result.values[0].priority, 16)
+	})
+})
+
+test.describe('bacnet - Timer complex datatypes (SCHED-VM-A 13.10.x.2)', () => {
+	test('List_Of_Object_Property_References round-trips through WriteProperty', () => {
+		const buffer = utils.getBuffer()
+		WriteProperty.encode(
+			buffer,
+			31, // TIMER
+			7201,
+			PropertyIdentifier.LIST_OF_OBJECT_PROPERTY_REFERENCES,
+			0xffffffff,
+			0,
+			[
+				{
+					type: ApplicationTag.OBJECT_PROPERTY_REFERENCE,
+					value: { objectId: { type: 2, instance: 5 }, id: 85 },
+				},
+				{
+					type: ApplicationTag.OBJECT_PROPERTY_REFERENCE,
+					value: { objectId: { type: 5, instance: 3 }, id: 85 },
+				},
+			] as any,
+		)
+		const result = WriteProperty.decode(buffer.buffer, 0, buffer.offset)
+		assert(result)
+		const values = result.value.value
+		assert.strictEqual(values.length, 2)
+		assert.strictEqual(
+			values[0].type,
+			ApplicationTag.OBJECT_PROPERTY_REFERENCE,
+		)
+		assert.strictEqual(values[0].value.objectId.instance, 5)
+		assert.strictEqual(values[0].value.id.value ?? values[0].value.id, 85)
+		assert.strictEqual(values[1].value.objectId.objectType, 5)
+	})
+
+	test('Timer no-value ([0] NULL) encodes distinctly from application NULL and decodes back', () => {
+		// Encode: no-value must be context [0] length 0 (0x08); NULL stays 0x00.
+		const buffer = utils.getBuffer()
+		baAsn1.bacappEncodeApplicationData(buffer, {
+			type: ApplicationTag.NO_VALUE,
+			value: null,
+		})
+		assert.strictEqual(buffer.offset, 1)
+		assert.strictEqual(buffer.buffer[0], 0x08)
+		const nullBuffer = utils.getBuffer()
+		baAsn1.bacappEncodeApplicationData(nullBuffer, {
+			type: ApplicationTag.NULL,
+			value: null,
+		})
+		assert.strictEqual(nullBuffer.buffer[0], 0x00)
+
+		// Round trip via WriteProperty of State_Change_Values[3].
+		const wp = utils.getBuffer()
+		WriteProperty.encode(
+			wp,
+			31,
+			7201,
+			PropertyIdentifier.STATE_CHANGE_VALUES,
+			3,
+			0,
+			[{ type: ApplicationTag.NO_VALUE, value: null }] as any,
+		)
+		const result = WriteProperty.decode(wp.buffer, 0, wp.offset)
+		assert(result)
+		assert.strictEqual(result.value.value[0].type, ApplicationTag.NO_VALUE)
+		assert.strictEqual(result.value.value[0].value, null)
 	})
 })

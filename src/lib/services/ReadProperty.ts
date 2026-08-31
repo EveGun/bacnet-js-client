@@ -42,7 +42,9 @@ export default class ReadProperty extends BacnetService {
 		const nonEmptyDays = (days as unknown[][]).filter((d) => d.length > 0)
 		// Many devices return a single indexed day payload encoded as day[0] only.
 		if (nonEmptyDays.length <= 1) return days[0] as unknown[]
-		return idx >= 0 && idx < days.length ? (days[idx] as unknown[]) : undefined
+		return idx >= 0 && idx < days.length
+			? (days[idx] as unknown[])
+			: undefined
 	}
 
 	public static encode(
@@ -106,10 +108,13 @@ export default class ReadProperty extends BacnetService {
 			index: ASN1_ARRAY_ALL,
 		}
 
+		// The property identifier and optional array index are context
+		// tags 1 and 2 (ASHRAE 135 - 15.5.1.1); an application-class tag
+		// with the same tag number is an invalid tag, not a match.
+		if (!baAsn1.decodeIsContextTag(buffer, offset + len, 1))
+			return undefined
 		const result = baAsn1.decodeTagNumberAndValue(buffer, offset + len)
 		len += result.len
-
-		if (result.tagNumber !== 1) return undefined
 
 		const enumResult = baAsn1.decodeEnumerated(
 			buffer,
@@ -120,6 +125,8 @@ export default class ReadProperty extends BacnetService {
 		property.id = enumResult.value
 
 		if (len < apduLen) {
+			if (!baAsn1.decodeIsContextTag(buffer, offset + len, 2))
+				return undefined
 			const tagResult = baAsn1.decodeTagNumberAndValue(
 				buffer,
 				offset + len,

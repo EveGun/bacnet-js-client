@@ -1,7 +1,8 @@
 import * as baAsn1 from '../asn1'
-import { ASN1_ARRAY_ALL } from '../enum'
+import { ASN1_ARRAY_ALL, PropertyIdentifier } from '../enum'
 import { EncodeBuffer, BACNetObjectID, BACNetAppData } from '../types'
 import { BacnetService } from './AbstractServices'
+import WriteProperty from './WriteProperty'
 
 export default class AddListElement extends BacnetService {
 	public static encode(
@@ -22,9 +23,21 @@ export default class AddListElement extends BacnetService {
 			baAsn1.encodeContextUnsigned(buffer, 2, arrayIndex)
 		}
 		baAsn1.encodeOpeningTag(buffer, 3)
-		values.forEach((value: BACNetAppData) =>
-			baAsn1.bacappEncodeApplicationData(buffer, value),
-		)
+		if (propertyId === PropertyIdentifier.DATE_LIST) {
+			// Date_List elements are BACnetCalendarEntry CHOICEs ([0] date /
+			// [1] dateRange / [2] weekNDay), not application-tagged data —
+			// the same constructed encoding WriteProperty uses for the
+			// full-property write (ASHRAE 135 §21, BACnetCalendarEntry).
+			WriteProperty.encodeCalendarDateListPayload(
+				buffer,
+				values as any,
+				ASN1_ARRAY_ALL,
+			)
+		} else {
+			values.forEach((value: BACNetAppData) =>
+				baAsn1.bacappEncodeApplicationData(buffer, value),
+			)
+		}
 		baAsn1.encodeClosingTag(buffer, 3)
 	}
 

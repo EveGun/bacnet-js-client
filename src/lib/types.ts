@@ -402,6 +402,8 @@ export interface ApplicationTagValueTypeMap {
 	[ApplicationTag.CONTEXT_SPECIFIC_DECODED]: any
 	[ApplicationTag.CONTEXT_SPECIFIC_ENCODED]: any
 	[ApplicationTag.LOG_RECORD]: any
+	[ApplicationTag.HOST_N_PORT]: BACNetHostNPort
+	[ApplicationTag.NO_VALUE]: null
 }
 
 export interface BACNetPropertyState {
@@ -433,6 +435,21 @@ export interface BACNetTimestamp<T extends TimeStamp = TimeStamp> {
 export interface Decode<T> {
 	len: number
 	value: T
+}
+
+/**
+ * BACnetHostNPort (ASHRAE 135-2020 Clause 21): a host CHOICE plus a UDP
+ * port. Used by Network Port properties such as FD_BBMD_Address.
+ * `host.type` follows the HostAddressType enum: NONE carries no payload,
+ * IP_ADDRESS carries `address` (raw octets), NAME carries `name`.
+ */
+export interface BACNetHostNPort {
+	host: {
+		type: number
+		address?: number[]
+		name?: string
+	}
+	port: number
 }
 
 export interface Tag {
@@ -502,6 +519,12 @@ export interface DeviceObjPropertyRef {
 	value: {
 		objectId: ObjectId
 		id: Decode<number>
+		/** [2] optional property array index. */
+		arrayIndex?: number
+		/** Present when the reference names a remote device ([3] in
+		 * BACnetDeviceObjectPropertyReference). Field name matches the
+		 * encoder's (sic). */
+		deviceIndentifier?: BACNetObjectID
 	}
 }
 
@@ -607,6 +630,46 @@ export interface ClientOptions {
 export interface WhoIsOptions {
 	lowLimit?: number
 	highLimit?: number
+}
+
+/**
+ * Outcome summary of a locally initiated confirmed-request transaction,
+ * emitted as the `transaction` event. Purely observational (certification
+ * and diagnostics UIs); protocol handling is unaffected. The reject/abort
+ * distinction mirrors the received PDU type.
+ */
+export interface ConfirmedTransactionOutcome {
+	service: number
+	invokeId: number
+	/** Normalized link key (`ip:port`) the transaction was correlated on. */
+	link: string
+	/** Receiver address exactly as passed by the caller. */
+	receiver?: BACNetAddress
+	disposition: 'ack' | 'error' | 'reject' | 'abort' | 'timeout' | 'failed'
+	errorClass?: number
+	errorCode?: number
+	rejectReason?: number
+	abortReason?: number
+	/** True when the request itself was sent as a segmented transfer. */
+	segmentedRequest: boolean
+	/** True when the request advertised SEGMENTED_RESPONSE_ACCEPTED. */
+	acceptedSegmentedResponse: boolean
+	durationMs: number
+	/** Raw error message for non-protocol failures (`disposition: 'failed'`). */
+	errorMessage?: string
+}
+
+/**
+ * Options for sending a Who-Has request. Exactly one of `objectId` or
+ * `objectName` must be provided (ASHRAE 135 Clause 16.9: the object
+ * identifier and object name are a CHOICE). The optional device instance
+ * range limits which devices should answer, mirroring Who-Is.
+ */
+export interface WhoHasOptions {
+	lowLimit?: number
+	highLimit?: number
+	objectId?: BACNetObjectID
+	objectName?: string
 }
 
 /**
@@ -1249,7 +1312,7 @@ export interface DeviceObjectResult {
 export interface WritePropertyMultipleValue {
 	property: PropertyReference
 	value: BACNetWritePropertyValues
-	priority: number
+	priority?: number
 }
 
 export interface WritePropertyMultipleObject {

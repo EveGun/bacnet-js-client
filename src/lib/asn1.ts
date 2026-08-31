@@ -34,6 +34,7 @@ import {
 	BACNetRawDate,
 	LogRecord,
 	LogRecordValue,
+	BACNetHostNPort,
 } from './types'
 import {
 	CharacterStringEncoding,
@@ -50,6 +51,7 @@ import {
 	ASN1_MAX_PROPERTY_ID,
 	ASN1_MAX_APPLICATION_TAG,
 	TimeStamp,
+	HostAddressType,
 } from './enum'
 
 const trace = debugLib('bacnet:asn1:trace')
@@ -794,16 +796,111 @@ const encodeCovSubscription = (
 	}
 }
 
+/**
+ * Encodes a BACnetHostNPort (ASHRAE 135-2020 Clause 21):
+ * host [0] BACnetHostAddress (CHOICE: none [0] NULL, ip-address [1]
+ * OCTET STRING, name [2] CharacterString), port [1] Unsigned16.
+ */
+export const encodeHostNPort = (
+	buffer: EncodeBuffer,
+	value: BACNetHostNPort,
+): void => {
+	encodeOpeningTag(buffer, 0)
+	const host = value.host ?? { type: HostAddressType.NONE }
+	switch (host.type) {
+		case HostAddressType.IP_ADDRESS: {
+			const address = host.address ?? []
+			encodeTag(buffer, 1, true, address.length)
+			encodeOctetString(buffer, address, 0, address.length)
+			break
+		}
+		case HostAddressType.NAME:
+			encodeContextCharacterString(buffer, 2, host.name ?? '')
+			break
+		default:
+			// none: context NULL is a zero-length context tag
+			encodeTag(buffer, 0, true, 0)
+			break
+	}
+	encodeClosingTag(buffer, 0)
+	encodeContextUnsigned(buffer, 1, value.port)
+}
+
+/** Decodes a BACnetHostNPort; see `encodeHostNPort` for the structure. */
+export const decodeHostNPort = (
+	buffer: Buffer,
+	offset: number,
+	maxOffset: number,
+): Decode<BACNetHostNPort> | undefined => {
+	let len = 0
+	if (!decodeIsOpeningTagNumber(buffer, offset + len, 0)) return undefined
+	len++
+	const hostTag = decodeTagNumberAndValue(buffer, offset + len)
+	if (!hostTag) return undefined
+	let host: BACNetHostNPort['host']
+	if (hostTag.tagNumber === 0) {
+		len += hostTag.len
+		host = { type: HostAddressType.NONE }
+	} else if (hostTag.tagNumber === 1) {
+		len += hostTag.len
+		const octets = decodeOctetString(
+			buffer,
+			offset + len,
+			maxOffset,
+			0,
+			hostTag.value,
+		)
+		len += octets.len
+		host = { type: HostAddressType.IP_ADDRESS, address: octets.value }
+	} else if (hostTag.tagNumber === 2) {
+		len += hostTag.len
+		const name = decodeCharacterString(
+			buffer,
+			offset + len,
+			maxOffset - (offset + len),
+			hostTag.value,
+		)
+		len += name.len
+		host = { type: HostAddressType.NAME, name: name.value }
+	} else {
+		return undefined
+	}
+	if (!decodeIsClosingTagNumber(buffer, offset + len, 0)) return undefined
+	len++
+	const portTag = decodeTagNumberAndValue(buffer, offset + len)
+	if (!portTag || portTag.tagNumber !== 1) return undefined
+	len += portTag.len
+	const port = decodeUnsigned(buffer, offset + len, portTag.value)
+	len += port.len
+	return { len, value: { host, port: port.value } }
+}
+
 export const bacappEncodeApplicationData = (
 	buffer: EncodeBuffer,
 	value: BACNetEncodableAppData,
 ): void => {
-	if (value.value === null) {
+	if (value.value === null && value.type !== ApplicationTag.NO_VALUE) {
+		// NO_VALUE is the timer CHOICE [0] NULL — it must not be downgraded
+		// to an application NULL by the null-coercion below.
 		value.type = ApplicationTag.NULL
 	}
 	switch (value.type) {
 		case ApplicationTag.NULL:
 			encodeApplicationNull(buffer)
+			break
+		case ApplicationTag.HOST_N_PORT:
+			encodeHostNPort(buffer, value.value)
+			break
+		case ApplicationTag.OBJECT_PROPERTY_REFERENCE:
+			// BACnetDeviceObjectPropertyReference as application data — used by
+			// writable LISTs such as List_Of_Object_Property_References
+			// (Schedule/Timer targets, SCHED-VM-A 13.10.x.2).
+			bacappEncodeDeviceObjPropertyRef(buffer, value.value as any)
+			break
+		case ApplicationTag.NO_VALUE:
+			// BACnetTimerStateChangeValue no-value CHOICE: context [0] NULL —
+			// deliberately distinct from an application NULL (relinquish).
+			encodeTag(buffer, 0, true, 0)
 			break
 		case ApplicationTag.BOOLEAN:
 			encodeApplicationBoolean(buffer, value.value)
@@ -889,10 +986,13 @@ const bacappEncodeDeviceObjPropertyRef = (
 		value.objectId.instance,
 	)
 	encodeContextEnumerated(buffer, 1, value.id)
-	if (value.arrayIndex !== ASN1_ARRAY_ALL) {
-		encodeContextUnsigned(buffer, 2, value.arrayIndex)
+	// arrayIndex and deviceIdentifier are OPTIONAL in the reference —
+	// tolerate their absence instead of crashing on undefined.
+	const refArrayIndex = value.arrayIndex ?? ASN1_ARRAY_ALL
+	if (refArrayIndex !== ASN1_ARRAY_ALL) {
+		encodeContextUnsigned(buffer, 2, refArrayIndex)
 	}
-	if (value.deviceIndentifier.type === ObjectType.DEVICE) {
+	if (value.deviceIndentifier?.type === ObjectType.DEVICE) {
 		encodeContextObjectId(
 			buffer,
 			3,
@@ -2083,7 +2183,7 @@ const decodeDeviceObjPropertyRef = (
 	// let arrayIndex = ASN1_ARRAY_ALL;
 	if (!decodeIsContextTag(buffer, offset + len, 0)) return undefined
 	len++
-	let objectId = decodeObjectId(buffer, offset + len)
+	const objectId = decodeObjectId(buffer, offset + len)
 	len += objectId.len
 	let result = decodeTagNumberAndValue(buffer, offset + len)
 	len += result.len
@@ -2091,21 +2191,28 @@ const decodeDeviceObjPropertyRef = (
 	const id = decodeEnumerated(buffer, offset + len, result.value)
 	len += id.len
 	result = decodeTagNumberAndValue(buffer, offset + len)
+	// [2] optional property array index — surfaced so a read reference
+	// round-trips losslessly (it was previously decoded and discarded).
+	let arrayIndex: number | undefined
 	if (result.tagNumber === 2) {
 		len += result.len
-		// FIXME: This doesn't seem to be used
 		const unsignedResult = decodeUnsigned(
 			buffer,
 			offset + len,
 			result.value,
 		)
 		len += unsignedResult.len
+		arrayIndex = unsignedResult.value
 	}
+	// [3] optional device identifier: a REMOTE reference. It must not
+	// overwrite the referenced object — it is surfaced as its own field
+	// (mirroring the encoder's deviceIndentifier input).
+	let deviceObjectId: ObjectId | undefined
 	if (decodeIsContextTag(buffer, offset + len, 3)) {
 		if (!isClosingTag(buffer[offset + len])) {
 			len++
-			objectId = decodeObjectId(buffer, offset + len)
-			len += objectId.len
+			deviceObjectId = decodeObjectId(buffer, offset + len)
+			len += deviceObjectId.len
 		}
 	}
 	return {
@@ -2113,6 +2220,15 @@ const decodeDeviceObjPropertyRef = (
 		value: {
 			objectId,
 			id,
+			...(arrayIndex !== undefined ? { arrayIndex } : {}),
+			...(deviceObjectId
+				? {
+						deviceIndentifier: {
+							type: deviceObjectId.objectType,
+							instance: deviceObjectId.instance,
+						},
+					}
+				: {}),
 		},
 	}
 }
@@ -3100,6 +3216,46 @@ const bacappDecodeContextApplicationData = (
 ): ApplicationData | undefined => {
 	let len = 0
 	if (isContextSpecific(buffer[offset])) {
+		if (
+			propertyId === PropertyIdentifier.STATE_CHANGE_VALUES &&
+			buffer[offset] === 0x08
+		) {
+			// Timer no-value CHOICE: context tag [0], zero length.
+			return { type: ApplicationTag.NO_VALUE, value: null, len: 1 }
+		}
+		if (
+			propertyId === PropertyIdentifier.STATE_CHANGE_VALUES &&
+			buffer[offset] === 0x1e
+		) {
+			// BACnetTimerStateChangeValue constructed-value CHOICE [1]: one
+			// application datum wrapped in [1] tags. Decode to the inner datum
+			// so ordinary values keep their type — a [1]-wrapped ENUMERATED is
+			// still an ENUMERATED to every consumer.
+			let len = 1
+			const inner = bacappDecodeApplicationData(
+				buffer,
+				offset + len,
+				maxOffset,
+				objectType,
+				propertyId,
+			)
+			if (inner && typeof inner.len === 'number') {
+				len += inner.len
+				if (decodeIsClosingTagNumber(buffer, offset + len, 1)) {
+					len++
+					const result: ApplicationData = {
+						type: inner.type,
+						value: inner.value,
+						len,
+					}
+					if (inner.encoding !== undefined)
+						result.encoding = inner.encoding
+					return result
+				}
+			}
+			// Not a single-datum [1] group: fall through to the generic
+			// context decode below.
+		}
 		if (propertyId === PropertyIdentifier.LIST_OF_GROUP_MEMBERS) {
 			const result = decodeReadAccessSpecification(
 				buffer,
@@ -3153,6 +3309,15 @@ const bacappDecodeContextApplicationData = (
 			if (!result) return undefined
 			return {
 				type: ApplicationTag.CONTEXT_SPECIFIC_DECODED,
+				value: result.value,
+				len: result.len,
+			}
+		}
+		if (propertyId === PropertyIdentifier.FD_BBMD_ADDRESS) {
+			const result = decodeHostNPort(buffer, offset, maxOffset)
+			if (!result) return undefined
+			return {
+				type: ApplicationTag.HOST_N_PORT,
 				value: result.value,
 				len: result.len,
 			}

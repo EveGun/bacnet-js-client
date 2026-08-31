@@ -1404,4 +1404,104 @@ test.describe('WriteProperty schedule/calendar compatibility', () => {
 			)
 		}, /invalid raw date year/)
 	})
+
+	test.describe('State_Change_Values CHOICE encoding (Timer)', () => {
+		// TD read bytes for ENUM [1, NULL, 2, 3, NO_VALUE, 4, 5]: ordinary
+		// datums in the constructed-value [1] wrapper, no-value as bare 0x08.
+		const TD_READ = Buffer.from([
+			0x1e, 0x91, 0x01, 0x1f, 0x1e, 0x00, 0x1f, 0x1e, 0x91, 0x02, 0x1f,
+			0x1e, 0x91, 0x03, 0x1f, 0x08, 0x1e, 0x91, 0x04, 0x1f, 0x1e, 0x91,
+			0x05, 0x1f,
+		])
+
+		test('byte-level roundtrip: decode TD read, edit last to 6, encode write symmetrically', () => {
+			// Decode exactly as reception does (property-aware, sequential).
+			const entries: any[] = []
+			let offset = 0
+			while (offset < TD_READ.length) {
+				const decoded = baAsn1.bacappDecodeApplicationData(
+					TD_READ,
+					offset,
+					TD_READ.length,
+					ObjectType.TIMER,
+					PropertyIdentifier.STATE_CHANGE_VALUES,
+				) as any
+				assert.ok(decoded, `entry decodes at offset ${offset}`)
+				offset += decoded.len
+				entries.push({ type: decoded.type, value: decoded.value })
+			}
+			assert.deepStrictEqual(
+				entries.map((e) => ({ t: e.type, v: e.value })),
+				[
+					{ t: ApplicationTag.ENUMERATED, v: 1 },
+					{ t: ApplicationTag.NULL, v: null },
+					{ t: ApplicationTag.ENUMERATED, v: 2 },
+					{ t: ApplicationTag.ENUMERATED, v: 3 },
+					{ t: ApplicationTag.NO_VALUE, v: null },
+					{ t: ApplicationTag.ENUMERATED, v: 4 },
+					{ t: ApplicationTag.ENUMERATED, v: 5 },
+				],
+			)
+
+			// Edit ONLY the last value.
+			entries[6] = { type: ApplicationTag.ENUMERATED, value: 6 }
+
+			// Encode the write payload — must mirror the TD's own encoding.
+			const buffer = utils.getBuffer()
+			WriteProperty.encodePropertyValuePayload(
+				buffer,
+				ObjectType.TIMER,
+				PropertyIdentifier.STATE_CHANGE_VALUES,
+				0xffffffff,
+				entries,
+			)
+			assert.deepStrictEqual(
+				[...buffer.buffer.subarray(0, buffer.offset)],
+				[
+					0x1e, 0x91, 0x01, 0x1f, 0x1e, 0x00, 0x1f, 0x1e, 0x91, 0x02,
+					0x1f, 0x1e, 0x91, 0x03, 0x1f, 0x08, 0x1e, 0x91, 0x04, 0x1f,
+					0x1e, 0x91, 0x06, 0x1f,
+				],
+			)
+		})
+
+		test('single-element write (arrayIndex) and array resize keep the CHOICE forms', () => {
+			const one = utils.getBuffer()
+			WriteProperty.encodePropertyValuePayload(
+				one,
+				ObjectType.TIMER,
+				PropertyIdentifier.STATE_CHANGE_VALUES,
+				2,
+				[{ type: ApplicationTag.ENUMERATED, value: 9 }] as any,
+			)
+			assert.deepStrictEqual(
+				[...one.buffer.subarray(0, one.offset)],
+				[0x1e, 0x91, 0x09, 0x1f],
+			)
+			const noValue = utils.getBuffer()
+			WriteProperty.encodePropertyValuePayload(
+				noValue,
+				ObjectType.TIMER,
+				PropertyIdentifier.STATE_CHANGE_VALUES,
+				5,
+				[{ type: ApplicationTag.NO_VALUE, value: null }] as any,
+			)
+			assert.deepStrictEqual(
+				[...noValue.buffer.subarray(0, noValue.offset)],
+				[0x08],
+			)
+			const resize = utils.getBuffer()
+			WriteProperty.encodePropertyValuePayload(
+				resize,
+				ObjectType.TIMER,
+				PropertyIdentifier.STATE_CHANGE_VALUES,
+				0,
+				7 as any,
+			)
+			assert.deepStrictEqual(
+				[...resize.buffer.subarray(0, resize.offset)],
+				[0x21, 0x07],
+			)
+		})
+	})
 })
