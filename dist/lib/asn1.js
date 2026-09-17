@@ -948,6 +948,8 @@ const bacappDecodeApplicationData = (buffer, offset, maxOffset, objectType, prop
             };
             if (result.encoding !== undefined)
                 resObj.encoding = result.encoding;
+            if (result.raw !== undefined)
+                resObj.raw = result.raw;
             return resObj;
         }
     }
@@ -1392,6 +1394,7 @@ const decodeBacnetTime = (buffer, offset) => {
     const min = buffer[offset + 1];
     const sec = buffer[offset + 2];
     let hundredths = buffer[offset + 3];
+    const raw = { hour, minute: min, second: sec, hundredths };
     if (hour !== 0xff || min !== 0xff || sec !== 0xff || hundredths !== 0xff) {
         if (hundredths >= 100)
             hundredths = 0;
@@ -1403,6 +1406,7 @@ const decodeBacnetTime = (buffer, offset) => {
     return {
         len: 4,
         value,
+        raw,
     };
 };
 exports.decodeBacnetTime = decodeBacnetTime;
@@ -1509,6 +1513,9 @@ const bacappDecodeData = (buffer, offset, maxLength, tagDataType, lenValueType) 
             result = decodeBacnetTimeSafe(buffer, offset, lenValueType);
             value.len += result.len;
             value.value = result.value;
+            if (result.raw) {
+                value.raw = result.raw;
+            }
             break;
         case enum_1.ApplicationTag.WEEKNDAY:
             result = decodeBacnetWeekNDaySafe(buffer, offset, lenValueType);

@@ -60,7 +60,14 @@ export declare const decodeDate: (buffer: Buffer, offset: number) => Decode<Date
     };
 };
 export declare const decodeApplicationDate: (buffer: Buffer, offset: number) => Decode<Date> | undefined;
-export declare const decodeBacnetTime: (buffer: Buffer, offset: number) => Decode<Date>;
+export declare const decodeBacnetTime: (buffer: Buffer, offset: number) => Decode<Date> & {
+    raw: {
+        hour: number;
+        minute: number;
+        second: number;
+        hundredths: number;
+    };
+};
 export declare const decodeApplicationTime: (buffer: Buffer, offset: number) => Decode<Date> | undefined;
 export declare const decodeBacnetDatetime: (buffer: Buffer, offset: number) => Decode<Date>;
 export declare const decodeReadAccessSpecification: (buffer: Buffer, offset: number, apduLen: number) => ReadAccessSpec | undefined;
