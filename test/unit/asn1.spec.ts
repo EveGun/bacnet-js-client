@@ -139,6 +139,103 @@ test.describe('bacnet - ASN1 layer', () => {
 		})
 	})
 
+	test.describe('decodeBacnetTime', () => {
+		test('should decode a concrete time and preserve raw octets', () => {
+			const result = baAsn1.decodeBacnetTime(
+				Buffer.from([12, 0, 17, 0]),
+				0,
+			)
+			assert.equal(result.len, 4)
+			assert.equal(result.value.getHours(), 12)
+			assert.equal(result.value.getMinutes(), 0)
+			assert.equal(result.value.getSeconds(), 17)
+			assert.equal(result.value.getMilliseconds(), 0)
+			assert.deepStrictEqual(result.raw, {
+				hour: 12,
+				minute: 0,
+				second: 17,
+				hundredths: 0,
+			})
+		})
+
+		test('should decode full wildcard time to ZERO_DATE and preserve raw', () => {
+			const result = baAsn1.decodeBacnetTime(
+				Buffer.from([0xff, 0xff, 0xff, 0xff]),
+				0,
+			)
+			assert.equal(result.value.getTime(), baAsn1.ZERO_DATE.getTime())
+			assert.deepStrictEqual(result.raw, {
+				hour: 0xff,
+				minute: 0xff,
+				second: 0xff,
+				hundredths: 0xff,
+			})
+		})
+
+		test('should preserve a partially unspecified time in raw', () => {
+			const result = baAsn1.decodeBacnetTime(
+				Buffer.from([12, 30, 0xff, 0xff]),
+				0,
+			)
+			assert.deepStrictEqual(result.raw, {
+				hour: 12,
+				minute: 30,
+				second: 0xff,
+				hundredths: 0xff,
+			})
+		})
+	})
+
+	test.describe('bacappDecodeApplicationData raw passthrough', () => {
+		test('application Date carries raw wildcard octets', () => {
+			// tag 10, len 4: year *, month 13 (odd), day 32 (last), wday *
+			const result = baAsn1.bacappDecodeApplicationData(
+				Buffer.from([0xa4, 0xff, 13, 32, 0xff]),
+				0,
+				5,
+				0,
+				0,
+			)
+			assert.equal(result?.type, ApplicationTag.DATE)
+			assert.deepStrictEqual(result?.raw, {
+				year: 0xff,
+				month: 13,
+				day: 32,
+				wday: 0xff,
+			})
+		})
+
+		test('application Time carries raw octets', () => {
+			const result = baAsn1.bacappDecodeApplicationData(
+				Buffer.from([0xb4, 23, 59, 0xff, 0xff]),
+				0,
+				5,
+				0,
+				0,
+			)
+			assert.equal(result?.type, ApplicationTag.TIME)
+			assert.deepStrictEqual(result?.raw, {
+				hour: 23,
+				minute: 59,
+				second: 0xff,
+				hundredths: 0xff,
+			})
+		})
+
+		test('non-date application data has no raw field', () => {
+			const result = baAsn1.bacappDecodeApplicationData(
+				Buffer.from([0x21, 0x2a]),
+				0,
+				2,
+				0,
+				0,
+			)
+			assert.equal(result?.type, ApplicationTag.UNSIGNED_INTEGER)
+			assert.equal(result?.value, 42)
+			assert.equal('raw' in (result as any), false)
+		})
+	})
+
 	test.describe('decodeDate', () => {
 		test('should decode full wildcard date to ZERO_DATE and preserve raw', () => {
 			const result = baAsn1.decodeDate(

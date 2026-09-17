@@ -115,8 +115,28 @@ test.describe('bacnet - Services layer WritePropertyMultiple unit', () => {
 							value: { bitsUsed: 24, value: [0xaa, 0xaa, 0xaa] },
 						},
 						{ type: 9, value: 4 },
-						{ type: 10, value: date },
-						{ type: 11, value: time },
+						{
+							type: 10,
+							value: date,
+							raw: {
+								year: date.getFullYear() - 1900,
+								month: date.getMonth() + 1,
+								day: date.getDate(),
+								wday: date.getDay() || 7,
+							},
+						},
+						{
+							type: 11,
+							value: time,
+							raw: {
+								hour: time.getHours(),
+								minute: time.getMinutes(),
+								second: time.getSeconds(),
+								hundredths: Math.floor(
+									time.getMilliseconds() / 10,
+								),
+							},
+						},
 						{ type: 12, value: { type: 3, instance: 0 } },
 					],
 				},

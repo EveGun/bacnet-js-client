@@ -1244,6 +1244,8 @@ export const bacappDecodeApplicationData = (
 			}
 			// HACK: Drop string specific handling ASAP
 			if (result.encoding !== undefined) resObj.encoding = result.encoding
+			// Date/Time wire octets (wildcards/specials survive only here).
+			if (result.raw !== undefined) resObj.raw = result.raw
 			return resObj
 		}
 	} else {
@@ -1880,12 +1882,18 @@ export const decodeApplicationDate = (
 export const decodeBacnetTime = (
 	buffer: Buffer,
 	offset: number,
-): Decode<Date> => {
+): Decode<Date> & {
+	raw: { hour: number; minute: number; second: number; hundredths: number }
+} => {
 	const value: Date = new Date(ZERO_DATE)
 	const hour = buffer[offset + 0]
 	const min = buffer[offset + 1]
 	const sec = buffer[offset + 2]
 	let hundredths = buffer[offset + 3]
+	// The wire octets, untouched: a JS Date cannot carry the BACnet
+	// "unspecified" (0xff) marker in any field (135 20.2.13), so consumers
+	// that must preserve wildcards read `raw` instead of `value`.
+	const raw = { hour, minute: min, second: sec, hundredths }
 	if (hour !== 0xff || min !== 0xff || sec !== 0xff || hundredths !== 0xff) {
 		if (hundredths >= 100) hundredths = 0
 		value.setHours(hour)
@@ -1896,6 +1904,7 @@ export const decodeBacnetTime = (
 	return {
 		len: 4,
 		value,
+		raw,
 	}
 }
 
@@ -1903,7 +1912,9 @@ const decodeBacnetTimeSafe = (
 	buffer: Buffer,
 	offset: number,
 	len: number,
-): Decode<Date> => {
+): Decode<Date> & {
+	raw?: { hour: number; minute: number; second: number; hundredths: number }
+} => {
 	if (len !== 4) {
 		return { len, value: ZERO_DATE }
 	}
@@ -2038,6 +2049,9 @@ const bacappDecodeData = (
 			result = decodeBacnetTimeSafe(buffer, offset, lenValueType)
 			value.len += result.len
 			value.value = result.value
+			if (result.raw) {
+				value.raw = result.raw
+			}
 			break
 		case ApplicationTag.WEEKNDAY:
 			result = decodeBacnetWeekNDaySafe(buffer, offset, lenValueType)
