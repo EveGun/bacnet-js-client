@@ -1,4 +1,4 @@
-import { EncodeBuffer, BACNetReadAccessSpecification, BACNetBitString, BACNetPropertyState, BACNetDevObjRef, Decode, Tag, ObjectId, ApplicationData, BACNetReadAccess, ReadAccessDecode, CharacterString, ReadAccessSpec, ContextCharacterString, BACNetDateValue, BACNetEncodableAppData, LogRecord, BACNetHostNPort } from './types';
+import { EncodeBuffer, BACNetReadAccessSpecification, BACNetBitString, BACNetPropertyState, BACNetDevObjRef, Decode, Tag, ObjectId, ApplicationData, BACNetReadAccess, ReadAccessDecode, CharacterString, ReadAccessSpec, ContextCharacterString, BACNetDateValue, BACNetTimeValue, BACNetEncodableAppData, LogRecord, BACNetHostNPort } from './types';
 export declare const START_YEAR = 1900;
 export declare const MAX_YEARS = 256;
 export declare const ZERO_DATE: Date;
@@ -21,7 +21,7 @@ export declare const encodeBacnetDate: (buffer: EncodeBuffer, value: Date) => vo
 export declare const encodeBacnetDateUtc: (buffer: EncodeBuffer, value: Date) => void;
 export declare const encodeApplicationDate: (buffer: EncodeBuffer, value: BACNetDateValue) => void;
 export declare const encodeApplicationDateUtc: (buffer: EncodeBuffer, value: Date | number) => void;
-export declare const encodeApplicationTime: (buffer: EncodeBuffer, value: Date | number) => void;
+export declare const encodeApplicationTime: (buffer: EncodeBuffer, value: BACNetTimeValue) => void;
 export declare const encodeApplicationTimeUtc: (buffer: EncodeBuffer, value: Date | number) => void;
 export declare const encodeContextObjectId: (buffer: EncodeBuffer, tagNumber: number, objectType: number, instance: number) => void;
 export declare const encodeOpeningTag: (buffer: EncodeBuffer, tagNumber: number) => void;

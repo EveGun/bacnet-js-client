@@ -493,7 +493,36 @@ const encodeBacnetTimeUtc = (buffer, value) => {
     buffer.buffer[buffer.offset++] = value.getUTCSeconds();
     buffer.buffer[buffer.offset++] = Math.min(99, Math.round(value.getUTCMilliseconds() / 10));
 };
+const validateRawTimeByte = (name, value, max) => {
+    if (value === 0xff)
+        return;
+    if (!Number.isInteger(value) || value < 0 || value > max) {
+        throw new Error(`invalid raw time ${name}: ${value}`);
+    }
+};
+const encodeRawBacnetTime = (buffer, value) => {
+    validateRawTimeByte('hour', value.hour, 23);
+    validateRawTimeByte('minute', value.minute, 59);
+    validateRawTimeByte('second', value.second, 59);
+    validateRawTimeByte('hundredths', value.hundredths, 99);
+    buffer.buffer[buffer.offset++] = value.hour;
+    buffer.buffer[buffer.offset++] = value.minute;
+    buffer.buffer[buffer.offset++] = value.second;
+    buffer.buffer[buffer.offset++] = value.hundredths;
+};
+const isRawTime = (value) => !!value &&
+    typeof value === 'object' &&
+    !(value instanceof Date) &&
+    'hour' in value &&
+    'minute' in value &&
+    'second' in value &&
+    'hundredths' in value;
 const encodeApplicationTime = (buffer, value) => {
+    if (isRawTime(value)) {
+        (0, exports.encodeTag)(buffer, enum_1.ApplicationTag.TIME, false, 4);
+        encodeRawBacnetTime(buffer, value);
+        return;
+    }
     if (typeof value === 'number' && !Number.isFinite(value)) {
         throw new Error(`invalid timestamp: ${value}`);
     }
@@ -1182,6 +1211,9 @@ const decodeReadAccessResult = (buffer, offset, apduLen) => {
                         ...(localResult.encoding !== undefined && {
                             encoding: localResult.encoding,
                         }),
+                        ...(localResult.raw !== undefined && {
+                            raw: localResult.raw,
+                        }),
                     };
                     localValues.push(resObj);
                 }
@@ -1193,13 +1225,19 @@ const decodeReadAccessResult = (buffer, offset, apduLen) => {
                     const date = localValues[0].value;
                     const time = localValues[1].value;
                     const bdatetime = new Date(date.getFullYear(), date.getMonth(), date.getDate(), time.getHours(), time.getMinutes(), time.getSeconds(), time.getMilliseconds());
-                    newEntry.value = [
-                        {
-                            type: enum_1.ApplicationTag.DATETIME,
-                            value: bdatetime,
-                            len: localValues[1].len,
-                        },
-                    ];
+                    const folded = {
+                        type: enum_1.ApplicationTag.DATETIME,
+                        value: bdatetime,
+                        len: localValues[1].len,
+                    };
+                    if (localValues[0].raw !== undefined ||
+                        localValues[1].raw !== undefined) {
+                        folded.raw = {
+                            date: localValues[0].raw,
+                            time: localValues[1].raw,
+                        };
+                    }
+                    newEntry.value = [folded];
                 }
                 else {
                     newEntry.value = localValues;
