@@ -30,6 +30,8 @@ import {
 	ReadAccessProperty,
 	ReadAccessError,
 	BACNetDateValue,
+	BACNetRawTime,
+	BACNetTimeValue,
 	BACNetEncodableAppData,
 	BACNetRawDate,
 	LogRecord,
@@ -638,10 +640,50 @@ const encodeBacnetTimeUtc = (buffer: EncodeBuffer, value: Date): void => {
 	)
 }
 
+const validateRawTimeByte = (
+	name: string,
+	value: number,
+	max: number,
+): void => {
+	if (value === 0xff) return // unspecified (135 20.2.13)
+	if (!Number.isInteger(value) || value < 0 || value > max) {
+		throw new Error(`invalid raw time ${name}: ${value}`)
+	}
+}
+
+/** BACnetTime from its four wire octets; 0xff in any field = unspecified. */
+const encodeRawBacnetTime = (
+	buffer: EncodeBuffer,
+	value: BACNetRawTime,
+): void => {
+	validateRawTimeByte('hour', value.hour, 23)
+	validateRawTimeByte('minute', value.minute, 59)
+	validateRawTimeByte('second', value.second, 59)
+	validateRawTimeByte('hundredths', value.hundredths, 99)
+	buffer.buffer[buffer.offset++] = value.hour
+	buffer.buffer[buffer.offset++] = value.minute
+	buffer.buffer[buffer.offset++] = value.second
+	buffer.buffer[buffer.offset++] = value.hundredths
+}
+
+const isRawTime = (value: unknown): value is BACNetRawTime =>
+	!!value &&
+	typeof value === 'object' &&
+	!(value instanceof Date) &&
+	'hour' in value &&
+	'minute' in value &&
+	'second' in value &&
+	'hundredths' in value
+
 export const encodeApplicationTime = (
 	buffer: EncodeBuffer,
-	value: Date | number,
+	value: BACNetTimeValue,
 ): void => {
+	if (isRawTime(value)) {
+		encodeTag(buffer, ApplicationTag.TIME, false, 4)
+		encodeRawBacnetTime(buffer, value)
+		return
+	}
 	if (typeof value === 'number' && !Number.isFinite(value)) {
 		throw new Error(`invalid timestamp: ${value}`)
 	}
@@ -1564,6 +1606,10 @@ export const decodeReadAccessResult = (
 						...(localResult.encoding !== undefined && {
 							encoding: localResult.encoding,
 						}),
+						// Date/Time wire octets — wildcards survive only here.
+						...(localResult.raw !== undefined && {
+							raw: localResult.raw,
+						}),
 					}
 					localValues.push(resObj)
 				}
@@ -1585,13 +1631,21 @@ export const decodeReadAccessResult = (
 						time.getSeconds(),
 						time.getMilliseconds(),
 					)
-					newEntry.value = [
-						{
-							type: ApplicationTag.DATETIME,
-							value: bdatetime,
-							len: localValues[1].len,
-						},
-					]
+					const folded: ApplicationData = {
+						type: ApplicationTag.DATETIME,
+						value: bdatetime,
+						len: localValues[1].len,
+					}
+					if (
+						localValues[0].raw !== undefined ||
+						localValues[1].raw !== undefined
+					) {
+						folded.raw = {
+							date: localValues[0].raw,
+							time: localValues[1].raw,
+						}
+					}
+					newEntry.value = [folded]
 				} else {
 					newEntry.value = localValues
 				}

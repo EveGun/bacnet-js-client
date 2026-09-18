@@ -439,6 +439,78 @@ test.describe('bacnet - ASN1 layer', () => {
 			)
 		})
 
+		test('should encode TIME from raw octets (wildcards preserved) in generic encoder', () => {
+			const buffer = { buffer: Buffer.alloc(16), offset: 0 }
+			baAsn1.bacappEncodeApplicationData(buffer, {
+				type: ApplicationTag.TIME,
+				value: { hour: 12, minute: 30, second: 0xff, hundredths: 0xff },
+			})
+			assert.deepStrictEqual(
+				buffer.buffer.slice(0, buffer.offset),
+				Buffer.from([0xb4, 12, 30, 0xff, 0xff]),
+			)
+			const decoded = baAsn1.bacappDecodeApplicationData(
+				buffer.buffer,
+				0,
+				buffer.offset,
+				0,
+				0,
+			)
+			assert.deepStrictEqual(decoded?.raw, {
+				hour: 12,
+				minute: 30,
+				second: 0xff,
+				hundredths: 0xff,
+			})
+		})
+
+		test('should encode fully unspecified TIME from raw octets', () => {
+			const buffer = { buffer: Buffer.alloc(16), offset: 0 }
+			baAsn1.bacappEncodeApplicationData(buffer, {
+				type: ApplicationTag.TIME,
+				value: {
+					hour: 0xff,
+					minute: 0xff,
+					second: 0xff,
+					hundredths: 0xff,
+				},
+			})
+			assert.deepStrictEqual(
+				buffer.buffer.slice(0, buffer.offset),
+				Buffer.from([0xb4, 0xff, 0xff, 0xff, 0xff]),
+			)
+		})
+
+		test('should reject invalid raw TIME bytes in generic encoder', () => {
+			const buffer = { buffer: Buffer.alloc(16), offset: 0 }
+			assert.throws(
+				() =>
+					baAsn1.bacappEncodeApplicationData(buffer, {
+						type: ApplicationTag.TIME,
+						value: {
+							hour: 24,
+							minute: 0,
+							second: 0,
+							hundredths: 0,
+						},
+					}),
+				/invalid raw time hour/,
+			)
+			assert.throws(
+				() =>
+					baAsn1.bacappEncodeApplicationData(buffer, {
+						type: ApplicationTag.TIME,
+						value: {
+							hour: 1,
+							minute: 2,
+							second: 3,
+							hundredths: 100,
+						},
+					}),
+				/invalid raw time hundredths/,
+			)
+		})
+
 		test('should encode TIME from unix timestamp in generic encoder', () => {
 			const buffer = { buffer: Buffer.alloc(16), offset: 0 }
 			const timestamp = new Date(2025, 0, 2, 14, 30, 5, 120).getTime()

@@ -179,6 +179,19 @@ export default class WriteProperty extends BacnetService {
 		if (timeValue == null) {
 			throw new Error(`${errorPrefix} time is required`)
 		}
+		if (typeof timeValue === 'object' && !(timeValue instanceof Date)) {
+			// Raw BACnetTime octets: schedule times must be concrete (a Date
+			// is what the schedule encoders write), so wildcards are rejected.
+			const { hour, minute, second, hundredths } = timeValue
+			if ([hour, minute, second, hundredths].some((v) => v === 0xff)) {
+				throw new Error(
+					`${errorPrefix} time must not contain wildcards`,
+				)
+			}
+			const d = new Date(1900, 0, 1)
+			d.setHours(hour, minute, second, hundredths * 10)
+			return d
+		}
 		const normalized =
 			timeValue instanceof Date ? timeValue : new Date(timeValue)
 		if (Number.isNaN(normalized.getTime())) {

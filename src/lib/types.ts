@@ -227,12 +227,22 @@ export type BACNetDateAppData = Omit<
 	value: BACNetDateValue
 }
 
+/** BACnetTime wire octets (135 20.2.13); 0xff in any field = unspecified. */
+export interface BACNetRawTime {
+	hour: number
+	minute: number
+	second: number
+	hundredths: number
+}
+
+export type BACNetTimeValue = Date | number | BACNetRawTime
+
 export type BACNetTimeAppData = Omit<
 	BACNetAppData<ApplicationTag.TIME>,
 	'value'
 > & {
 	type: ApplicationTag.TIME
-	value: Date | number
+	value: BACNetTimeValue
 }
 
 export type BACNetEncodableAppData =

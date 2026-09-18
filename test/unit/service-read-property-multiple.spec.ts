@@ -191,8 +191,31 @@ test.describe('ReadPropertyMultipleAcknowledge', () => {
 									},
 								},
 								{ type: 9, value: 4 },
-								{ type: 10, value: '1901-01-31T23:00:00.000Z' },
-								{ type: 11, value: '1901-01-31T23:00:00.990Z' },
+								{
+									type: 10,
+									value: '1901-01-31T23:00:00.000Z',
+									raw: {
+										year: date.getFullYear() - 1900,
+										month: date.getMonth() + 1,
+										day: date.getDate(),
+										wday: date.getDay() || 7,
+									},
+								},
+								{
+									type: 11,
+									value: '1901-01-31T23:00:00.990Z',
+									raw: {
+										hour: time.getHours(),
+										minute: time.getMinutes(),
+										second: time.getSeconds(),
+										hundredths: Math.min(
+											99,
+											Math.round(
+												time.getMilliseconds() / 10,
+											),
+										),
+									},
+								},
 								{ type: 12, value: { type: 3, instance: 0 } },
 							],
 						},
@@ -463,5 +486,114 @@ test.describe('ReadPropertyMultipleAcknowledge', () => {
 		assert.equal(Array.isArray(values), true)
 		assert.equal(values.length, 1)
 		assert.equal(values[0].priority.value, 3)
+	})
+})
+
+test.describe('ReadPropertyMultiple raw Date/Time passthrough', () => {
+	test('acknowledge keeps raw octets on Date and Time values', () => {
+		const buffer = { buffer: Buffer.alloc(256), offset: 0 }
+		ReadPropertyMultiple.encodeAcknowledge(buffer, [
+			{
+				objectId: { type: 43, instance: 8104 },
+				values: [
+					{
+						property: { id: 85, index: 0xffffffff },
+						// June 15, any year, any weekday (BTL 8.18.3 DS-V-A pattern)
+						value: [
+							{
+								type: ApplicationTag.DATE,
+								value: {
+									year: 0xff,
+									month: 6,
+									day: 15,
+									wday: 0xff,
+								},
+							},
+						],
+					},
+					{
+						property: { id: 86, index: 0xffffffff },
+						value: [
+							{
+								type: ApplicationTag.TIME,
+								value: {
+									hour: 0xff,
+									minute: 30,
+									second: 0,
+									hundredths: 0,
+								},
+							},
+						],
+					},
+				],
+			},
+		])
+		const result = ReadPropertyMultiple.decodeAcknowledge(
+			buffer.buffer,
+			0,
+			buffer.offset,
+		)
+		assert.ok(result)
+		const [date, time] = result.values[0].values
+		assert.equal(date.value[0].type, ApplicationTag.DATE)
+		assert.deepStrictEqual(date.value[0].raw, {
+			year: 0xff,
+			month: 6,
+			day: 15,
+			wday: 0xff,
+		})
+		assert.equal(time.value[0].type, ApplicationTag.TIME)
+		assert.deepStrictEqual(time.value[0].raw, {
+			hour: 0xff,
+			minute: 30,
+			second: 0,
+			hundredths: 0,
+		})
+	})
+
+	test('acknowledge folds Date+Time into DATETIME and carries both raw parts', () => {
+		const buffer = { buffer: Buffer.alloc(256), offset: 0 }
+		ReadPropertyMultiple.encodeAcknowledge(buffer, [
+			{
+				objectId: { type: 45, instance: 1 },
+				values: [
+					{
+						property: { id: 85, index: 0xffffffff },
+						value: [
+							{
+								type: ApplicationTag.DATE,
+								value: {
+									year: 0xff,
+									month: 6,
+									day: 15,
+									wday: 0xff,
+								},
+							},
+							{
+								type: ApplicationTag.TIME,
+								value: {
+									hour: 12,
+									minute: 0,
+									second: 0xff,
+									hundredths: 0xff,
+								},
+							},
+						],
+					},
+				],
+			},
+		])
+		const result = ReadPropertyMultiple.decodeAcknowledge(
+			buffer.buffer,
+			0,
+			buffer.offset,
+		)
+		assert.ok(result)
+		const [entry] = result.values[0].values[0].value
+		assert.equal(entry.type, ApplicationTag.DATETIME)
+		assert.deepStrictEqual(entry.raw, {
+			date: { year: 0xff, month: 6, day: 15, wday: 0xff },
+			time: { hour: 12, minute: 0, second: 0xff, hundredths: 0xff },
+		})
 	})
 })
